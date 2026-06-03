@@ -7,7 +7,8 @@ Implementation lands through small pull requests, each kept under 200 changed li
 ## Current capabilities
 
 - FastAPI app serving Streamable HTTP MCP on `127.0.0.1:9999/mcp`
-- Health check endpoint at `GET /healthz`
+- Health check endpoint at `GET /health`
+- FastAPI REST errors use `{code, message, timestamp}` JSON envelopes
 - Safe Markdown note path resolution inside the configured vault
 - Serialized writes through one `WriteQueue`
 - `if_hash` optimistic concurrency for updates

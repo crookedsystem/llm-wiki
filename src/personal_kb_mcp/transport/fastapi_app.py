@@ -5,6 +5,7 @@ from fastapi import FastAPI
 
 from personal_kb_mcp.config import Settings
 from personal_kb_mcp.runtime import create_runtime
+from personal_kb_mcp.transport.errors import register_error_handlers
 from personal_kb_mcp.transport.mcp_server import create_mcp_server
 
 
@@ -20,11 +21,12 @@ def create_fastapi_app(settings: Settings) -> FastAPI:
             yield
 
     app = FastAPI(title="personal-kb-mcp", lifespan=lifespan)
+    register_error_handlers(app)
     app.state.runtime = runtime
 
-    @app.get("/healthz")
-    def healthz() -> dict[str, str]:
+    @app.get("/health")
+    def health() -> dict[str, str]:
         return {"status": "ok", "mcp_path": settings.mcp_path}
 
-    app.mount("/", mcp_app)
+    app.router.routes.extend(mcp_app.routes)
     return app
