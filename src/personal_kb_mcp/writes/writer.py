@@ -20,6 +20,19 @@ class WriteNoteResult:
 
 
 @dataclass(frozen=True)
+class WriteNoteCommand:
+    note_path: str | Path
+    content: str
+    if_hash: str | None = None
+
+
+@dataclass(frozen=True)
+class _FileSnapshot:
+    path: Path
+    content: str | None
+
+
+@dataclass(frozen=True)
 class VaultWriter:
     paths: VaultPaths
     queue: WriteQueue
@@ -41,6 +54,34 @@ class VaultWriter:
             )
 
         return await self.queue.run(operation)
+
+    async def batch_write_notes(
+        self,
+        commands: list[WriteNoteCommand],
+        *,
+        atomic: bool = True,
+    ) -> list[WriteNoteResult]:
+        async def operation() -> list[WriteNoteResult]:
+            return await self._batch_write_notes(commands, atomic=atomic)
+
+        return await self.queue.run(operation)
+
+    async def _batch_write_notes(
+        self,
+        commands: list[WriteNoteCommand],
+        *,
+        atomic: bool,
+    ) -> list[WriteNoteResult]:
+        snapshots = self._snapshot_commands(commands) if atomic else []
+        try:
+            return [
+                await self._write_note(command.note_path, command.content, if_hash=command.if_hash)
+                for command in commands
+            ]
+        except Exception:
+            if atomic:
+                self._restore_snapshots(snapshots)
+            raise
 
     async def _write_note(
         self,
@@ -76,6 +117,26 @@ class VaultWriter:
             [resolved_path],
             f"Update {resolved_path.relative_to(self.paths.root.resolve()).as_posix()}",
         )
+
+    def _snapshot_commands(self, commands: list[WriteNoteCommand]) -> list[_FileSnapshot]:
+        snapshots: list[_FileSnapshot] = []
+        seen_paths: set[Path] = set()
+        for command in commands:
+            resolved_path = self.paths.resolve_note_path(command.note_path)
+            if resolved_path in seen_paths:
+                continue
+            seen_paths.add(resolved_path)
+            content = resolved_path.read_text(encoding="utf-8") if resolved_path.exists() else None
+            snapshots.append(_FileSnapshot(resolved_path, content))
+        return snapshots
+
+    def _restore_snapshots(self, snapshots: list[_FileSnapshot]) -> None:
+        for snapshot in snapshots:
+            if snapshot.content is None:
+                snapshot.path.unlink(missing_ok=True)
+                continue
+            snapshot.path.parent.mkdir(parents=True, exist_ok=True)
+            snapshot.path.write_text(snapshot.content, encoding="utf-8")
 
     def _check_if_hash(self, resolved_path: Path, if_hash: str | None) -> None:
         if not resolved_path.exists():
