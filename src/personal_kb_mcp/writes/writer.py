@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 
+from personal_kb_mcp.git.repository import GitRepository
 from personal_kb_mcp.vault.notes import append_provenance_trailer, compute_sha256
 from personal_kb_mcp.vault.paths import VaultPaths
 from personal_kb_mcp.writes.queue import WriteQueue
@@ -23,6 +24,7 @@ class VaultWriter:
     paths: VaultPaths
     queue: WriteQueue
     actor: str = "personal-kb-mcp"
+    git_repository: GitRepository | None = None
 
     async def write_note(
         self,
@@ -59,10 +61,20 @@ class VaultWriter:
         )
         resolved_path.parent.mkdir(parents=True, exist_ok=True)
         resolved_path.write_text(final_content, encoding="utf-8")
+        commit_hash = self._commit_written_path(resolved_path)
         return WriteNoteResult(
             path=resolved_path,
             source_hash=source_hash,
             content_hash=compute_sha256(final_content),
+            commit_hash=commit_hash,
+        )
+
+    def _commit_written_path(self, resolved_path: Path) -> str | None:
+        if self.git_repository is None:
+            return None
+        return self.git_repository.commit_paths(
+            [resolved_path],
+            f"Update {resolved_path.relative_to(self.paths.root.resolve()).as_posix()}",
         )
 
     def _check_if_hash(self, resolved_path: Path, if_hash: str | None) -> None:
