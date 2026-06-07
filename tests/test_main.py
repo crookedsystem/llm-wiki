@@ -1,31 +1,36 @@
 from pathlib import Path
+from typing import Any, cast
 
+from fastapi import FastAPI
 from pytest import MonkeyPatch
 
 from personal_kb_mcp import main as main_module
 from personal_kb_mcp.config import Settings
 
 
-class FakeServer:
-    def __init__(self) -> None:
-        self.transport: str | None = None
-
-    def run(self, transport: str) -> None:
-        self.transport = transport
-
-
-def test_run_server_starts_streamable_http_transport(
+def test_run_server_starts_fastapi_app_with_uvicorn(
     monkeypatch: MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    fake_server = FakeServer()
+    fake_app = FastAPI()
+    calls: dict[str, Any] = {}
 
-    def fake_create_mcp_server(settings: Settings) -> FakeServer:
+    def fake_create_fastapi_app(settings: Settings) -> FastAPI:
         assert settings.port == 9999
-        return fake_server
+        return fake_app
 
-    monkeypatch.setattr(main_module, "create_mcp_server", fake_create_mcp_server)
+    def fake_uvicorn_run(app: FastAPI, **kwargs: Any) -> None:
+        calls["app"] = app
+        calls.update(kwargs)
+
+    monkeypatch.setattr(main_module, "create_fastapi_app", fake_create_fastapi_app)
+    monkeypatch.setattr(cast(Any, main_module).uvicorn, "run", fake_uvicorn_run)
 
     main_module.run_server(Settings(vault_path=tmp_path / "vault"))
 
-    assert fake_server.transport == "streamable-http"
+    assert calls == {
+        "app": fake_app,
+        "host": "127.0.0.1",
+        "port": 9999,
+        "log_level": "info",
+    }

@@ -4,20 +4,15 @@ from typing import Any, Literal, cast
 from mcp.server.fastmcp import FastMCP
 
 from personal_kb_mcp.config import Settings
+from personal_kb_mcp.runtime import create_runtime
 from personal_kb_mcp.status.health import inspect_vault
-from personal_kb_mcp.vault.paths import VaultPaths
-from personal_kb_mcp.writes.queue import WriteQueue
 from personal_kb_mcp.writes.writer import VaultWriter
 
 McpLogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
 
-def create_mcp_server(settings: Settings) -> FastMCP[Any]:
-    writer = VaultWriter(
-        VaultPaths(settings.vault_path),
-        WriteQueue(),
-        actor="personal-kb-mcp",
-    )
+def create_mcp_server(settings: Settings, writer: VaultWriter | None = None) -> FastMCP[Any]:
+    resolved_writer = writer or create_runtime(settings).writer
     server = FastMCP(
         "personal-kb-mcp",
         host=settings.host,
@@ -32,7 +27,7 @@ def create_mcp_server(settings: Settings) -> FastMCP[Any]:
         content: str,
         if_hash: str | None = None,
     ) -> dict[str, str | None]:
-        result = await writer.write_note(note_path, content, if_hash=if_hash)
+        result = await resolved_writer.write_note(note_path, content, if_hash=if_hash)
         return {
             "path": result.path.as_posix(),
             "source_hash": result.source_hash,
