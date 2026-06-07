@@ -2,7 +2,7 @@
 
 [English](README.md) | [한국어](README.ko.md) | [中文](README.zh.md) | [日本語](README.ja.md)
 
-实现会通过小型 pull request 合入，并让每个 PR 保持在 200 行变更以内。
+面向 Git 托管的 Obsidian/Markdown 知识库的私有 MCP 服务器。
 
 ## 当前功能
 

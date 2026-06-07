@@ -2,7 +2,7 @@
 
 [English](README.md) | [한국어](README.ko.md) | [中文](README.zh.md) | [日本語](README.ja.md)
 
-実装は小さな pull request 単位で取り込み、各 PR は変更行数 200 行未満に保ちます。
+Git 管理された Obsidian/Markdown ナレッジベース向けのプライベート MCP サーバーです。
 
 ## 現在の機能
 

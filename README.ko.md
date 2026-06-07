@@ -2,7 +2,7 @@
 
 [English](README.md) | [한국어](README.ko.md) | [中文](README.zh.md) | [日本語](README.ja.md)
 
-구현은 작은 pull request 단위로 반영하며, 각 PR은 변경 라인 200줄 미만을 유지합니다.
+Git으로 관리되는 Obsidian/Markdown 지식 베이스를 위한 개인용 MCP 서버입니다.
 
 ## 현재 기능
 

@@ -2,7 +2,7 @@
 
 [English](README.md) | [한국어](README.ko.md) | [中文](README.zh.md) | [日本語](README.ja.md)
 
-Implementation lands through small pull requests, each kept under 200 changed lines.
+Private MCP server for a Git-backed Obsidian/Markdown knowledge base.
 
 ## Current capabilities
 
