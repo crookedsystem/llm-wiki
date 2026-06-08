@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from personal_kb_mcp.status.health import inspect_vault
+from personal_kb_mcp.service.vault_inspection_service import inspect_vault
 
 
 def test_vault_점검은_상태와_그래프_건강도와_메트릭을_함께_계산한다(tmp_path: Path) -> None:

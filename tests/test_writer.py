@@ -3,16 +3,19 @@ from pathlib import Path
 
 import pytest
 
-from personal_kb_mcp.vault.notes import compute_sha256
-from personal_kb_mcp.vault.paths import VaultPaths
-from personal_kb_mcp.writes.queue import WriteQueue
-from personal_kb_mcp.writes.writer import VaultWriter, WriteConflictError
+from personal_kb_mcp.domain.vault_note import compute_sha256
+from personal_kb_mcp.domain.vault_path import VaultPaths
+from personal_kb_mcp.domain.vault_write import WriteConflictError
+from personal_kb_mcp.service.vault_write_queue import VaultWriteQueue
+from personal_kb_mcp.service.vault_write_service import VaultWriteService
 
 
 def test_note_작성은_hash와_provenance를_함께_반환한다(tmp_path: Path) -> None:
     async def exercise_writer() -> None:
         # Given: provenance actor가 지정된 vault writer가 있다.
-        writer = VaultWriter(VaultPaths(tmp_path / "vault"), WriteQueue(), actor="tester")
+        writer = VaultWriteService(
+            VaultPaths(tmp_path / "vault"), VaultWriteQueue(), actor="tester"
+        )
 
         # When: 새 markdown note를 작성한다.
         result = await writer.write_note("daily/today.md", "Body text")
@@ -31,7 +34,9 @@ def test_note_작성은_hash와_provenance를_함께_반환한다(tmp_path: Path
 def test_existing_note_수정은_현재_content_hash가_맞을_때만_허용된다(tmp_path: Path) -> None:
     async def exercise_writer() -> None:
         # Given: 이미 작성된 note와 그 note의 현재 content hash가 있다.
-        writer = VaultWriter(VaultPaths(tmp_path / "vault"), WriteQueue(), actor="tester")
+        writer = VaultWriteService(
+            VaultPaths(tmp_path / "vault"), VaultWriteQueue(), actor="tester"
+        )
         first_result = await writer.write_note("daily/today.md", "Initial body")
 
         # When / Then: if_hash가 없거나 오래된 값이면 수정이 거부된다.

@@ -3,29 +3,32 @@ from pathlib import Path
 from threading import Lock
 
 from personal_kb_mcp.config import Settings
-from personal_kb_mcp.vault.paths import VaultPaths
-from personal_kb_mcp.vault.service import VaultService
-from personal_kb_mcp.writes.queue import WriteQueue
-from personal_kb_mcp.writes.writer import VaultWriter
+from personal_kb_mcp.domain.vault_path import VaultPaths
+from personal_kb_mcp.infrastructure.repositories.vault_note_repository import VaultNoteRepository
+from personal_kb_mcp.service.vault_inspection_service import VaultInspectionService
+from personal_kb_mcp.service.vault_search_service import VaultSearchService
+from personal_kb_mcp.service.vault_write_queue import VaultWriteQueue
+from personal_kb_mcp.service.vault_write_service import VaultWriteService
 
 
 @dataclass(frozen=True)
 class Runtime:
-    write_queue: WriteQueue
-    writer: VaultWriter
-    vault_service: VaultService
+    write_queue: VaultWriteQueue
+    write_service: VaultWriteService
+    search_service: VaultSearchService
+    inspection_service: VaultInspectionService
 
 
-_queue_registry: dict[Path, WriteQueue] = {}
+_queue_registry: dict[Path, VaultWriteQueue] = {}
 _queue_registry_lock = Lock()
 
 
-def get_write_queue(vault_path: Path) -> WriteQueue:
+def get_write_queue(vault_path: Path) -> VaultWriteQueue:
     vault_root = vault_path.expanduser().resolve()
     with _queue_registry_lock:
         queue = _queue_registry.get(vault_root)
         if queue is None:
-            queue = WriteQueue()
+            queue = VaultWriteQueue()
             _queue_registry[vault_root] = queue
         return queue
 
@@ -33,10 +36,17 @@ def get_write_queue(vault_path: Path) -> WriteQueue:
 def create_runtime(settings: Settings) -> Runtime:
     vault_root = settings.vault_path.expanduser().resolve()
     write_queue = get_write_queue(vault_root)
-    writer = VaultWriter(
+    note_repository = VaultNoteRepository(vault_root)
+    write_service = VaultWriteService(
         VaultPaths(vault_root),
         write_queue,
         actor="personal-kb-mcp",
     )
-    vault_service = VaultService(vault_root)
-    return Runtime(write_queue=write_queue, writer=writer, vault_service=vault_service)
+    search_service = VaultSearchService(note_repository)
+    inspection_service = VaultInspectionService(note_repository)
+    return Runtime(
+        write_queue=write_queue,
+        write_service=write_service,
+        search_service=search_service,
+        inspection_service=inspection_service,
+    )

@@ -4,10 +4,10 @@ from mcp.server.fastmcp import FastMCP
 from typing_extensions import TypedDict
 
 from personal_kb_mcp.config import Settings
+from personal_kb_mcp.domain.vault_search import NoteSearchResult
 from personal_kb_mcp.runtime import create_runtime
-from personal_kb_mcp.vault.search_dto import NoteSearchResult
-from personal_kb_mcp.vault.service import VaultService
-from personal_kb_mcp.writes.writer import VaultWriter
+from personal_kb_mcp.service.vault_search_service import VaultSearchService
+from personal_kb_mcp.service.vault_write_service import VaultWriteService
 
 McpLogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
@@ -42,16 +42,16 @@ class SearchNotesToolResponse(TypedDict):
 
 def create_mcp_server(
     settings: Settings,
-    writer: VaultWriter | None = None,
-    vault_service: VaultService | None = None,
+    write_service: VaultWriteService | None = None,
+    search_service: VaultSearchService | None = None,
 ) -> FastMCP[object]:
-    if writer is None or vault_service is None:
+    if write_service is None or search_service is None:
         runtime = create_runtime(settings)
-        resolved_writer = writer or runtime.writer
-        resolved_vault_service = vault_service or runtime.vault_service
+        resolved_write_service = write_service or runtime.write_service
+        resolved_search_service = search_service or runtime.search_service
     else:
-        resolved_writer = writer
-        resolved_vault_service = vault_service
+        resolved_write_service = write_service
+        resolved_search_service = search_service
 
     server: FastMCP[object] = FastMCP(
         "personal-kb-mcp",
@@ -73,7 +73,7 @@ def create_mcp_server(
         content: str,
         if_hash: str | None = None,
     ) -> WriteNoteToolResponse:
-        result = await resolved_writer.write_note(note_path, content, if_hash=if_hash)
+        result = await resolved_write_service.write_note(note_path, content, if_hash=if_hash)
         return {
             "path": result.path.as_posix(),
             "source_hash": result.source_hash,
@@ -93,7 +93,7 @@ def create_mcp_server(
         limit: int = 10,
         path_prefix: str | None = None,
     ) -> SearchNotesToolResponse:
-        results = resolved_vault_service.search_notes(
+        results = resolved_search_service.search_notes(
             query,
             limit=limit,
             path_prefix=path_prefix,

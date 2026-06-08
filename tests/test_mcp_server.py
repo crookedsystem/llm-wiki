@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import TypedDict, cast
 
 from personal_kb_mcp.config import Settings
-from personal_kb_mcp.transport.mcp_server import create_mcp_server
+from personal_kb_mcp.infrastructure.mcp_tools.mcp_server import create_mcp_server
 
 
 class WriteNoteToolResult(TypedDict):

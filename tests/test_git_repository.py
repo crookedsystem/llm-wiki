@@ -2,10 +2,10 @@ import asyncio
 import subprocess
 from pathlib import Path
 
-from personal_kb_mcp.git.repository import GitRepository
-from personal_kb_mcp.vault.paths import VaultPaths
-from personal_kb_mcp.writes.queue import WriteQueue
-from personal_kb_mcp.writes.writer import VaultWriter
+from personal_kb_mcp.domain.vault_path import VaultPaths
+from personal_kb_mcp.infrastructure.repositories.git_repository import GitRepository
+from personal_kb_mcp.service.vault_write_queue import VaultWriteQueue
+from personal_kb_mcp.service.vault_write_service import VaultWriteService
 
 
 def test_git_repository가_연결된_note_작성은_commit_hash를_반환한다(tmp_path: Path) -> None:
@@ -14,9 +14,9 @@ def test_git_repository가_연결된_note_작성은_commit_hash를_반환한다(
         vault_root = tmp_path / "vault"
         vault_root.mkdir()
         subprocess.run(["git", "init"], cwd=vault_root, check=True, capture_output=True)
-        writer = VaultWriter(
+        writer = VaultWriteService(
             VaultPaths(vault_root),
-            WriteQueue(),
+            VaultWriteQueue(),
             actor="tester",
             git_repository=GitRepository(vault_root),
         )

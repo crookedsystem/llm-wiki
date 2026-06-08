@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from personal_kb_mcp.vault.paths import VaultPathError
-from personal_kb_mcp.vault.search import search_notes
+from personal_kb_mcp.domain.vault_path import VaultPathError
+from personal_kb_mcp.service.vault_search_service import search_notes
 
 
 def test_search_notes는_llm_wiki_구조를_반영해_synthesized_page를_우선한다(

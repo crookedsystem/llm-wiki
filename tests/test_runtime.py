@@ -14,5 +14,5 @@ def test_runtime은_같은_vault에_대해_하나의_write_queue를_재사용한
 
     # Then: 두 writer는 같은 process-local write queue를 공유한다.
     assert first.write_queue is second.write_queue
-    assert first.writer.queue is first.write_queue
-    assert second.writer.queue is first.write_queue
+    assert first.write_service.queue is first.write_queue
+    assert second.write_service.queue is first.write_queue

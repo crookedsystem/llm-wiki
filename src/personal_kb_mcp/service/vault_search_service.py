@@ -1,18 +1,67 @@
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from personal_kb_mcp.vault.notes import compute_sha256
-from personal_kb_mcp.vault.paths import DEFAULT_DENIED_NAMES, VaultPathError
-from personal_kb_mcp.vault.search_constants import FRONTMATTER_BOUNDARY, QUERY_TOKEN_PATTERN
-from personal_kb_mcp.vault.search_dto import (
+from personal_kb_mcp.domain.vault_note import compute_sha256
+from personal_kb_mcp.domain.vault_search import (
+    FRONTMATTER_BOUNDARY,
+    MAX_SEARCH_LIMIT,
+    QUERY_TOKEN_PATTERN,
     FrontmatterMetadata,
     LineMatch,
     NoteMetadata,
     NoteSearchResult,
+    SearchQuery,
 )
-from personal_kb_mcp.vault.search_score import SearchScoreService
-from personal_kb_mcp.vault.search_validation import validate_search_request
+from personal_kb_mcp.infrastructure.repositories.vault_note_repository import VaultNoteRepository
+from personal_kb_mcp.service.vault_search_score_service import VaultSearchScoreService
 
-_SEARCH_SCORE_SERVICE = SearchScoreService()
+
+@dataclass(frozen=True)
+class VaultSearchService:
+    note_repository: VaultNoteRepository
+    score_service: VaultSearchScoreService = field(default_factory=VaultSearchScoreService)
+
+    def search_notes(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+        path_prefix: str | None = None,
+    ) -> list[NoteSearchResult]:
+        """Vault 안 Markdown note를 검색해 관련도순 result DTO로 반환합니다."""
+        search_query = _validate_search_request(query, limit)
+        search_root = self.note_repository.resolve_search_root(path_prefix)
+        terms = _query_terms(search_query.query)
+        results: list[NoteSearchResult] = []
+
+        for note_path in self.note_repository.markdown_notes(search_root):
+            relative_path = self.note_repository.relative_path(note_path)
+            content = self.note_repository.read_note(note_path)
+            metadata = _extract_metadata(content)
+            score = self.score_service.score_note(
+                relative_path,
+                content,
+                metadata,
+                search_query.query,
+                terms,
+            )
+            if score <= 0:
+                continue
+            results.append(
+                NoteSearchResult(
+                    path=relative_path,
+                    title=metadata.title,
+                    page_type=metadata.page_type,
+                    tags=metadata.tags,
+                    score=round(score, 3),
+                    content_hash=compute_sha256(content),
+                    matches=_line_matches(content, search_query.query, terms),
+                )
+            )
+
+        return sorted(results, key=lambda result: (-result.score, result.path))[
+            : search_query.limit
+        ]
 
 
 def search_notes(
@@ -22,87 +71,21 @@ def search_notes(
     limit: int = 10,
     path_prefix: str | None = None,
 ) -> list[NoteSearchResult]:
-    """Vault 안 Markdown note를 검색해 관련도순 result DTO로 반환합니다."""
-    search_query = validate_search_request(query, limit)
-
-    root = vault_root.expanduser().resolve()
-    search_root = _resolve_path_prefix(root, path_prefix)
-    terms = _query_terms(search_query.query)
-    results: list[NoteSearchResult] = []
-
-    for note_path in _markdown_notes(root, search_root):
-        relative_path = note_path.relative_to(root).as_posix()
-        content = note_path.read_text(encoding="utf-8")
-        metadata = _extract_metadata(content)
-        score = _SEARCH_SCORE_SERVICE.score_note(
-            relative_path,
-            content,
-            metadata,
-            search_query.query,
-            terms,
-        )
-        if score <= 0:
-            continue
-        results.append(
-            NoteSearchResult(
-                path=relative_path,
-                title=metadata.title,
-                page_type=metadata.page_type,
-                tags=metadata.tags,
-                score=round(score, 3),
-                content_hash=compute_sha256(content),
-                matches=_line_matches(content, search_query.query, terms),
-            )
-        )
-
-    return sorted(results, key=lambda result: (-result.score, result.path))[: search_query.limit]
+    return VaultSearchService(VaultNoteRepository(vault_root)).search_notes(
+        query,
+        limit=limit,
+        path_prefix=path_prefix,
+    )
 
 
-def _resolve_path_prefix(root: Path, path_prefix: str | None) -> Path:
-    """path_prefix를 vault 내부 검색 시작점으로 바꾸고 외부 경로 escape를 막습니다."""
-    if path_prefix is None or path_prefix.strip() in {"", "."}:
-        return root
-
-    relative_prefix = Path(path_prefix)
-    if relative_prefix.is_absolute():
-        raise VaultPathError("path_prefix must be relative to the vault")
-
-    resolved_prefix = (root / relative_prefix).resolve()
-    try:
-        resolved_prefix.relative_to(root)
-    except ValueError as error:
-        raise VaultPathError(f"path_prefix escapes outside vault: {resolved_prefix}") from error
-
-    if _uses_denied_directory(root, resolved_prefix):
-        raise VaultPathError("path_prefix uses denied vault directory")
-    return resolved_prefix
-
-
-def _markdown_notes(root: Path, search_root: Path) -> list[Path]:
-    if not search_root.exists():
-        return []
-    if search_root.is_file():
-        candidates = [search_root] if search_root.suffix == ".md" else []
-    else:
-        candidates = list(search_root.rglob("*.md"))
-    return sorted(path for candidate in candidates if (path := _searchable_note(root, candidate)))
-
-
-def _searchable_note(root: Path, candidate: Path) -> Path | None:
-    if not candidate.is_file():
-        return None
-    resolved_candidate = candidate.resolve()
-    try:
-        resolved_candidate.relative_to(root)
-    except ValueError:
-        return None
-    if _uses_denied_directory(root, resolved_candidate):
-        return None
-    return resolved_candidate
-
-
-def _uses_denied_directory(root: Path, path: Path) -> bool:
-    return any(part in DEFAULT_DENIED_NAMES for part in path.relative_to(root).parts)
+def _validate_search_request(query: str, limit: int) -> SearchQuery:
+    """검색어 공백과 limit 범위를 검증해 검색 엔진이 사용할 query DTO를 만듭니다."""
+    normalized_query = query.strip()
+    if not normalized_query:
+        raise ValueError("query must not be empty")
+    if not 1 <= limit <= MAX_SEARCH_LIMIT:
+        raise ValueError(f"limit must be between 1 and {MAX_SEARCH_LIMIT}")
+    return SearchQuery(query=normalized_query, limit=limit)
 
 
 def _query_terms(query: str) -> list[str]:

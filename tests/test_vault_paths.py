@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from personal_kb_mcp.vault.paths import VaultPathError, VaultPaths
+from personal_kb_mcp.domain.vault_path import VaultPathError, VaultPaths
 
 
 def test_vault_path는_안전한_markdown_상대경로를_vault_내부로_해결한다(tmp_path: Path) -> None:

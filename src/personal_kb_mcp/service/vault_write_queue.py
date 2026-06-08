@@ -7,7 +7,7 @@ ResultT = TypeVar("ResultT")
 
 
 @dataclass
-class WriteQueue:
+class VaultWriteQueue:
     """Serialize vault mutations through one async lock."""
 
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)

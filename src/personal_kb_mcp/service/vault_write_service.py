@@ -1,29 +1,11 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from personal_kb_mcp.git.repository import GitRepository
-from personal_kb_mcp.vault.notes import append_provenance_trailer, compute_sha256
-from personal_kb_mcp.vault.paths import VaultPaths
-from personal_kb_mcp.writes.queue import WriteQueue
-
-
-class WriteConflictError(RuntimeError):
-    """Raised when an update does not satisfy optimistic concurrency."""
-
-
-@dataclass(frozen=True)
-class WriteNoteResult:
-    path: Path
-    source_hash: str
-    content_hash: str
-    commit_hash: str | None = None
-
-
-@dataclass(frozen=True)
-class WriteNoteCommand:
-    note_path: str | Path
-    content: str
-    if_hash: str | None = None
+from personal_kb_mcp.domain.vault_note import append_provenance_trailer, compute_sha256
+from personal_kb_mcp.domain.vault_path import VaultPaths
+from personal_kb_mcp.domain.vault_write import WriteConflictError, WriteNoteCommand, WriteNoteResult
+from personal_kb_mcp.infrastructure.repositories.git_repository import GitRepository
+from personal_kb_mcp.service.vault_write_queue import VaultWriteQueue
 
 
 @dataclass(frozen=True)
@@ -33,9 +15,9 @@ class _FileSnapshot:
 
 
 @dataclass(frozen=True)
-class VaultWriter:
+class VaultWriteService:
     paths: VaultPaths
-    queue: WriteQueue
+    queue: VaultWriteQueue
     actor: str = "personal-kb-mcp"
     git_repository: GitRepository | None = None
 

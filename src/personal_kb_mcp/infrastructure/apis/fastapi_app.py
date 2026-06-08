@@ -7,10 +7,10 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
 from personal_kb_mcp.config import Settings
+from personal_kb_mcp.infrastructure.apis.rest_error_handler import register_error_handlers
+from personal_kb_mcp.infrastructure.mcp_tools.mcp_server import create_mcp_server
 from personal_kb_mcp.runtime import Runtime, create_runtime
-from personal_kb_mcp.transport.errors import register_error_handlers
-from personal_kb_mcp.transport.mcp_server import create_mcp_server
-from personal_kb_mcp.vault.service import VaultService
+from personal_kb_mcp.service.vault_inspection_service import VaultInspectionService
 
 JsonSchema = dict[str, object]
 
@@ -32,9 +32,9 @@ class MetricsDocument(BaseModel):
     graph_orphans_total: int = Field(ge=0, description="다른 note에서 링크되지 않은 orphan note 수")
 
 
-def get_vault_service(request: Request) -> VaultService:
+def get_inspection_service(request: Request) -> VaultInspectionService:
     runtime = cast(Runtime, request.app.state.runtime)
-    return runtime.vault_service
+    return runtime.inspection_service
 
 
 def get_mcp_server(request: Request) -> FastMCP[object]:
@@ -45,8 +45,8 @@ def create_fastapi_app(settings: Settings) -> FastAPI:
     runtime = create_runtime(settings)
     mcp_server = create_mcp_server(
         settings,
-        writer=runtime.writer,
-        vault_service=runtime.vault_service,
+        write_service=runtime.write_service,
+        search_service=runtime.search_service,
     )
     mcp_app = mcp_server.streamable_http_app()
 
@@ -82,9 +82,9 @@ def create_fastapi_app(settings: Settings) -> FastAPI:
         ),
     )
     def metrics(
-        vault_service: Annotated[VaultService, Depends(get_vault_service)],
+        inspection_service: Annotated[VaultInspectionService, Depends(get_inspection_service)],
     ) -> MetricsDocument:
-        snapshot = vault_service.inspect_vault().metrics
+        snapshot = inspection_service.inspect_vault().metrics
         return MetricsDocument(
             vault_notes_total=snapshot.vault_notes_total,
             vault_bytes_total=snapshot.vault_bytes_total,

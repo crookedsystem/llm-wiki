@@ -3,15 +3,18 @@ from pathlib import Path
 
 import pytest
 
-from personal_kb_mcp.vault.paths import VaultPaths
-from personal_kb_mcp.writes.queue import WriteQueue
-from personal_kb_mcp.writes.writer import VaultWriter, WriteConflictError, WriteNoteCommand
+from personal_kb_mcp.domain.vault_path import VaultPaths
+from personal_kb_mcp.domain.vault_write import WriteConflictError, WriteNoteCommand
+from personal_kb_mcp.service.vault_write_queue import VaultWriteQueue
+from personal_kb_mcp.service.vault_write_service import VaultWriteService
 
 
 def test_batch_write는_여러_note를_한_번에_작성한다(tmp_path: Path) -> None:
     async def exercise_writer() -> None:
         # Given: 같은 vault에 작성할 두 개의 write command가 있다.
-        writer = VaultWriter(VaultPaths(tmp_path / "vault"), WriteQueue(), actor="tester")
+        writer = VaultWriteService(
+            VaultPaths(tmp_path / "vault"), VaultWriteQueue(), actor="tester"
+        )
         commands = [
             WriteNoteCommand("daily/one.md", "One"),
             WriteNoteCommand("daily/two.md", "Two"),
@@ -31,7 +34,9 @@ def test_batch_write는_여러_note를_한_번에_작성한다(tmp_path: Path) -
 def test_atomic_batch_write는_중간에_실패하면_작성된_파일을_롤백한다(tmp_path: Path) -> None:
     async def exercise_writer() -> None:
         # Given: 기존 note와 새 note 작성이 섞인 atomic batch command가 있다.
-        writer = VaultWriter(VaultPaths(tmp_path / "vault"), WriteQueue(), actor="tester")
+        writer = VaultWriteService(
+            VaultPaths(tmp_path / "vault"), VaultWriteQueue(), actor="tester"
+        )
         first_result = await writer.write_note("daily/existing.md", "Original")
         existing_path = first_result.path
         original_content = existing_path.read_text(encoding="utf-8")

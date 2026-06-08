@@ -1,6 +1,6 @@
 import asyncio
 
-from personal_kb_mcp.vector.index import IndexedNote, NullVectorIndex, VectorSearchResult
+from personal_kb_mcp.domain.vector_index import IndexedNote, NullVectorIndex, VectorSearchResult
 
 
 def test_null_vector_index는_index와_delete를_받아도_검색결과를_반환하지_않는다() -> None:

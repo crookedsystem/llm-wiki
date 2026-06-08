@@ -1,12 +1,11 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from personal_kb_mcp.vault.search_constants import SYNTHESIZED_PAGE_DIRS
-from personal_kb_mcp.vault.search_dto import NoteMetadata
+from personal_kb_mcp.domain.vault_search import SYNTHESIZED_PAGE_DIRS, NoteMetadata
 
 
 @dataclass(frozen=True)
-class SearchScoreService:
+class VaultSearchScoreService:
     """검색어와 LLM Wiki 구조를 함께 반영해 note 검색 순위를 계산합니다."""
 
     def score_note(

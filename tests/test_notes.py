@@ -1,4 +1,4 @@
-from personal_kb_mcp.vault.notes import (
+from personal_kb_mcp.domain.vault_note import (
     append_provenance_trailer,
     compute_sha256,
     parse_note,

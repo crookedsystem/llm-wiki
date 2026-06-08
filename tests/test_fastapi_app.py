@@ -4,7 +4,7 @@ from pathlib import Path
 from starlette.testclient import TestClient
 
 from personal_kb_mcp.config import Settings
-from personal_kb_mcp.transport.fastapi_app import create_fastapi_app
+from personal_kb_mcp.infrastructure.apis.fastapi_app import create_fastapi_app
 
 
 def test_fastapi_app은_health_endpoint와_mcp_mount를_함께_노출한다(tmp_path: Path) -> None:
