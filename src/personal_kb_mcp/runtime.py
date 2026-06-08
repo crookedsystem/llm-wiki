@@ -3,12 +3,14 @@ from pathlib import Path
 from threading import Lock
 
 from personal_kb_mcp.config import Settings
-from personal_kb_mcp.domain.vault_path import VaultPaths
-from personal_kb_mcp.infrastructure.repositories.vault_note_repository import VaultNoteRepository
-from personal_kb_mcp.service.vault_inspection_service import VaultInspectionService
-from personal_kb_mcp.service.vault_search_service import VaultSearchService
-from personal_kb_mcp.service.vault_write_queue import VaultWriteQueue
-from personal_kb_mcp.service.vault_write_service import VaultWriteService
+from personal_kb_mcp.domain.vault.entity.vault_path import VaultPaths
+from personal_kb_mcp.domain.vault.infrastructure.repositories.vault_note_repository import (
+    VaultNoteRepository,
+)
+from personal_kb_mcp.domain.vault.service.vault_inspection_service import VaultInspectionService
+from personal_kb_mcp.domain.vault.service.vault_search_service import VaultSearchService
+from personal_kb_mcp.domain.vault.service.vault_write_queue import VaultWriteQueue
+from personal_kb_mcp.domain.vault.service.vault_write_service import VaultWriteService
 
 
 @dataclass(frozen=True)

@@ -1,7 +1,7 @@
 import uvicorn
 
 from personal_kb_mcp.config import Settings
-from personal_kb_mcp.infrastructure.apis.fastapi_app import create_fastapi_app
+from personal_kb_mcp.domain.vault.infrastructure.apis.fastapi_app import create_fastapi_app
 
 
 def run_server(settings: Settings | None = None) -> None:
