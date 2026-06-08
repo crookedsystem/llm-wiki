@@ -52,6 +52,29 @@ def test_search_notes는_llm_wiki_구조를_반영해_synthesized_page를_우선
     assert "title: Agent Memory" in concept.matches[0].snippet
 
 
+def test_search_notes는_frontmatter_tags_yaml_list_형식도_읽는다(tmp_path: Path) -> None:
+    # Given: tags가 YAML list 형식으로 작성된 Markdown note가 있다.
+    vault_root = tmp_path / "vault"
+    (vault_root / "concepts").mkdir(parents=True)
+    (vault_root / "concepts" / "agent-memory.md").write_text(
+        "---\n"
+        "title: Agent Memory\n"
+        "type: concept\n"
+        "tags:\n"
+        "  - agent\n"
+        "  - memory\n"
+        "---\n\n"
+        "# Agent Memory\n",
+        encoding="utf-8",
+    )
+
+    # When: title로 검색한다.
+    results = search_notes(vault_root, "agent memory")
+
+    # Then: inline list가 아니어도 schema에 있는 tags DTO만 결과에 반영된다.
+    assert results[0].tags == ["agent", "memory"]
+
+
 def test_search_notes는_path_prefix와_거부된_디렉터리를_적용한다(tmp_path: Path) -> None:
     # Given: 검색 가능한 concepts note와 거부된 .obsidian note가 있다.
     vault_root = tmp_path / "vault"
@@ -121,6 +144,15 @@ def test_search_notes는_limit_범위를_검증한다(tmp_path: Path, limit: int
     # When / Then: 범위를 벗어난 limit은 명확한 오류를 낸다.
     with pytest.raises(ValueError, match="limit must be between"):
         search_notes(vault_root, "query", limit=limit)
+
+
+def test_search_notes는_빈_query를_거부한다(tmp_path: Path) -> None:
+    # Given: 빈 vault가 있다.
+    vault_root = tmp_path / "vault"
+
+    # When / Then: 공백뿐인 query는 검색 전에 명확한 오류를 낸다.
+    with pytest.raises(ValueError, match="query must not be empty"):
+        search_notes(vault_root, "  \n\t  ")
 
 
 def test_search_notes는_vault_밖_prefix를_거부한다(tmp_path: Path) -> None:

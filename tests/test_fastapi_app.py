@@ -50,7 +50,15 @@ def test_fastapi_app은_metrics_endpoint에서_vault와_graph_지표를_통합�
         "graph_broken_links_total": 1,
         "graph_orphans_total": 1,
     }
-    assert "/metrics" in openapi_response.json()["paths"]
+    openapi_schema = openapi_response.json()
+    metrics_schema = openapi_schema["paths"]["/metrics"]["get"]
+    assert metrics_schema["summary"] == "Vault metrics 조회"
+    assert "wiki graph 지표" in metrics_schema["description"]
+    metric_fields = openapi_schema["components"]["schemas"]["MetricsDocument"]["properties"]
+    assert (
+        metric_fields["vault_notes_total"]["description"]
+        == "Vault에서 검색 가능한 Markdown note 수"
+    )
 
 
 def test_fastapi_app은_tools_endpoint에서_mcp_tool_schema를_문서화한다(

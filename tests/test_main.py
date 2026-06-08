@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import Any, cast
 
 from fastapi import FastAPI
 from pytest import MonkeyPatch
@@ -14,18 +13,18 @@ def test_run_server는_settings로_fastapi_app을_생성하고_uvicorn을_실행
 ) -> None:
     # Given: FastAPI app factory와 uvicorn.run을 관찰할 수 있도록 대체한다.
     fake_app = FastAPI()
-    calls: dict[str, Any] = {}
+    calls: dict[str, object] = {}
 
     def fake_create_fastapi_app(settings: Settings) -> FastAPI:
         assert settings.port == 9999
         return fake_app
 
-    def fake_uvicorn_run(app: FastAPI, **kwargs: Any) -> None:
+    def fake_uvicorn_run(app: FastAPI, **kwargs: object) -> None:
         calls["app"] = app
         calls.update(kwargs)
 
     monkeypatch.setattr(main_module, "create_fastapi_app", fake_create_fastapi_app)
-    monkeypatch.setattr(cast(Any, main_module).uvicorn, "run", fake_uvicorn_run)
+    monkeypatch.setattr("personal_kb_mcp.main.uvicorn.run", fake_uvicorn_run)
 
     # When: 명시 Settings로 서버 실행 진입점을 호출한다.
     main_module.run_server(Settings(host="127.0.0.1", vault_path=tmp_path / "vault"))

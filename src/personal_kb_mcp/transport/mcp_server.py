@@ -1,19 +1,59 @@
-from dataclasses import asdict
-from typing import Any, Literal, cast
+from typing import Literal, cast
 
 from mcp.server.fastmcp import FastMCP
+from typing_extensions import TypedDict
 
 from personal_kb_mcp.config import Settings
 from personal_kb_mcp.runtime import create_runtime
-from personal_kb_mcp.vault.search import search_notes
+from personal_kb_mcp.vault.search_dto import NoteSearchResult
+from personal_kb_mcp.vault.service import VaultService
 from personal_kb_mcp.writes.writer import VaultWriter
 
 McpLogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
 
-def create_mcp_server(settings: Settings, writer: VaultWriter | None = None) -> FastMCP[Any]:
-    resolved_writer = writer or create_runtime(settings).writer
-    server = FastMCP(
+class WriteNoteToolResponse(TypedDict):
+    path: str
+    source_hash: str
+    content_hash: str
+    commit_hash: str | None
+
+
+class LineMatchDocument(TypedDict):
+    line: int
+    snippet: str
+
+
+class NoteSearchResultDocument(TypedDict):
+    path: str
+    title: str | None
+    page_type: str | None
+    tags: list[str]
+    score: float
+    content_hash: str
+    matches: list[LineMatchDocument]
+
+
+class SearchNotesToolResponse(TypedDict):
+    query: str
+    count: int
+    results: list[NoteSearchResultDocument]
+
+
+def create_mcp_server(
+    settings: Settings,
+    writer: VaultWriter | None = None,
+    vault_service: VaultService | None = None,
+) -> FastMCP[object]:
+    if writer is None or vault_service is None:
+        runtime = create_runtime(settings)
+        resolved_writer = writer or runtime.writer
+        resolved_vault_service = vault_service or runtime.vault_service
+    else:
+        resolved_writer = writer
+        resolved_vault_service = vault_service
+
+    server: FastMCP[object] = FastMCP(
         "personal-kb-mcp",
         host=settings.host,
         port=settings.port,
@@ -32,7 +72,7 @@ def create_mcp_server(settings: Settings, writer: VaultWriter | None = None) -> 
         note_path: str,
         content: str,
         if_hash: str | None = None,
-    ) -> dict[str, str | None]:
+    ) -> WriteNoteToolResponse:
         result = await resolved_writer.write_note(note_path, content, if_hash=if_hash)
         return {
             "path": result.path.as_posix(),
@@ -52,9 +92,8 @@ def create_mcp_server(settings: Settings, writer: VaultWriter | None = None) -> 
         query: str,
         limit: int = 10,
         path_prefix: str | None = None,
-    ) -> dict[str, Any]:
-        results = search_notes(
-            settings.vault_path,
+    ) -> SearchNotesToolResponse:
+        results = resolved_vault_service.search_notes(
             query,
             limit=limit,
             path_prefix=path_prefix,
@@ -62,7 +101,19 @@ def create_mcp_server(settings: Settings, writer: VaultWriter | None = None) -> 
         return {
             "query": query,
             "count": len(results),
-            "results": [asdict(result) for result in results],
+            "results": [_note_search_result_document(result) for result in results],
         }
 
     return server
+
+
+def _note_search_result_document(result: NoteSearchResult) -> NoteSearchResultDocument:
+    return {
+        "path": result.path,
+        "title": result.title,
+        "page_type": result.page_type,
+        "tags": result.tags,
+        "score": result.score,
+        "content_hash": result.content_hash,
+        "matches": [{"line": match.line, "snippet": match.snippet} for match in result.matches],
+    }

@@ -4,6 +4,7 @@ from threading import Lock
 
 from personal_kb_mcp.config import Settings
 from personal_kb_mcp.vault.paths import VaultPaths
+from personal_kb_mcp.vault.service import VaultService
 from personal_kb_mcp.writes.queue import WriteQueue
 from personal_kb_mcp.writes.writer import VaultWriter
 
@@ -12,6 +13,7 @@ from personal_kb_mcp.writes.writer import VaultWriter
 class Runtime:
     write_queue: WriteQueue
     writer: VaultWriter
+    vault_service: VaultService
 
 
 _queue_registry: dict[Path, WriteQueue] = {}
@@ -36,4 +38,5 @@ def create_runtime(settings: Settings) -> Runtime:
         write_queue,
         actor="personal-kb-mcp",
     )
-    return Runtime(write_queue=write_queue, writer=writer)
+    vault_service = VaultService(vault_root)
+    return Runtime(write_queue=write_queue, writer=writer, vault_service=vault_service)

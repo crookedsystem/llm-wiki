@@ -1,9 +1,24 @@
 import asyncio
 from pathlib import Path
-from typing import Any, cast
+from typing import TypedDict, cast
 
 from personal_kb_mcp.config import Settings
 from personal_kb_mcp.transport.mcp_server import create_mcp_server
+
+
+class WriteNoteToolResult(TypedDict):
+    source_hash: str
+    content_hash: str
+
+
+class SearchNoteToolResult(TypedDict):
+    path: str
+    content_hash: str
+
+
+class SearchToolResult(TypedDict):
+    count: int
+    results: list[SearchNoteToolResult]
 
 
 def test_mcp_server는_기본_http_설정을_사용한다(tmp_path: Path) -> None:
@@ -33,9 +48,9 @@ def test_mcp_server는_write와_search_tool만_노출하고_description을_제�
             "kb_write_note",
             {"note_path": "concepts/agent-memory.md", "content": "# Agent Memory\n"},
         )
-        structured_write_result = cast(dict[str, Any], write_result)
+        structured_write_result = cast(WriteNoteToolResult, write_result)
         _, search_result = await server.call_tool("kb_search_notes", {"query": "agent memory"})
-        structured_search_result = cast(dict[str, Any], search_result)
+        structured_search_result = cast(SearchToolResult, search_result)
 
         # Then: MCP는 쓰기/검색 tool만 노출하고 각 tool description은 비어 있지 않다.
         tool_by_name = {tool.name: tool for tool in tools}
@@ -43,7 +58,7 @@ def test_mcp_server는_write와_search_tool만_노출하고_description을_제�
         assert "complete Markdown note" in (tool_by_name["kb_write_note"].description or "")
         assert "Search Markdown notes" in (tool_by_name["kb_search_notes"].description or "")
         assert structured_write_result["source_hash"]
-        results = cast(list[dict[str, Any]], structured_search_result["results"])
+        results = structured_search_result["results"]
         assert structured_search_result["count"] == 1
         assert results[0]["path"] == "concepts/agent-memory.md"
         assert results[0]["content_hash"] == structured_write_result["content_hash"]

@@ -1,31 +1,18 @@
-import re
-from dataclasses import dataclass
 from pathlib import Path
 
 from personal_kb_mcp.vault.notes import compute_sha256
 from personal_kb_mcp.vault.paths import DEFAULT_DENIED_NAMES, VaultPathError
+from personal_kb_mcp.vault.search_constants import FRONTMATTER_BOUNDARY, QUERY_TOKEN_PATTERN
+from personal_kb_mcp.vault.search_dto import (
+    FrontmatterMetadata,
+    LineMatch,
+    NoteMetadata,
+    NoteSearchResult,
+)
+from personal_kb_mcp.vault.search_score import SearchScoreService
+from personal_kb_mcp.vault.search_validation import validate_search_request
 
-QUERY_TOKEN_PATTERN = re.compile(r"[\w가-힣一-龥ぁ-んァ-ン]+", re.UNICODE)
-FRONTMATTER_BOUNDARY = "---"
-MAX_SEARCH_LIMIT = 50
-SYNTHESIZED_PAGE_DIRS = {"concepts", "entities", "comparisons", "queries"}
-
-
-@dataclass(frozen=True)
-class LineMatch:
-    line: int
-    snippet: str
-
-
-@dataclass(frozen=True)
-class NoteSearchResult:
-    path: str
-    title: str | None
-    page_type: str | None
-    tags: list[str]
-    score: float
-    content_hash: str
-    matches: list[LineMatch]
+_SEARCH_SCORE_SERVICE = SearchScoreService()
 
 
 def search_notes(
@@ -35,22 +22,25 @@ def search_notes(
     limit: int = 10,
     path_prefix: str | None = None,
 ) -> list[NoteSearchResult]:
-    normalized_query = query.strip()
-    if not normalized_query:
-        raise ValueError("query must not be empty")
-    if not 1 <= limit <= MAX_SEARCH_LIMIT:
-        raise ValueError(f"limit must be between 1 and {MAX_SEARCH_LIMIT}")
+    """Vault 안 Markdown note를 검색해 관련도순 result DTO로 반환합니다."""
+    search_query = validate_search_request(query, limit)
 
     root = vault_root.expanduser().resolve()
     search_root = _resolve_path_prefix(root, path_prefix)
-    terms = _query_terms(normalized_query)
+    terms = _query_terms(search_query.query)
     results: list[NoteSearchResult] = []
 
     for note_path in _markdown_notes(root, search_root):
         relative_path = note_path.relative_to(root).as_posix()
         content = note_path.read_text(encoding="utf-8")
         metadata = _extract_metadata(content)
-        score = _score_note(relative_path, content, metadata, normalized_query, terms)
+        score = _SEARCH_SCORE_SERVICE.score_note(
+            relative_path,
+            content,
+            metadata,
+            search_query.query,
+            terms,
+        )
         if score <= 0:
             continue
         results.append(
@@ -61,22 +51,15 @@ def search_notes(
                 tags=metadata.tags,
                 score=round(score, 3),
                 content_hash=compute_sha256(content),
-                matches=_line_matches(content, normalized_query, terms),
+                matches=_line_matches(content, search_query.query, terms),
             )
         )
 
-    return sorted(results, key=lambda result: (-result.score, result.path))[:limit]
-
-
-@dataclass(frozen=True)
-class _NoteMetadata:
-    title: str | None
-    page_type: str | None
-    tags: list[str]
-    headings: list[str]
+    return sorted(results, key=lambda result: (-result.score, result.path))[: search_query.limit]
 
 
 def _resolve_path_prefix(root: Path, path_prefix: str | None) -> Path:
+    """path_prefix를 vault 내부 검색 시작점으로 바꾸고 외부 경로 escape를 막습니다."""
     if path_prefix is None or path_prefix.strip() in {"", "."}:
         return root
 
@@ -127,15 +110,15 @@ def _query_terms(query: str) -> list[str]:
     return terms or [query.lower()]
 
 
-def _extract_metadata(content: str) -> _NoteMetadata:
+def _extract_metadata(content: str) -> NoteMetadata:
     frontmatter = _frontmatter(content)
-    frontmatter_values = _frontmatter_values(frontmatter)
+    frontmatter_metadata = _frontmatter_metadata(frontmatter)
     headings = _headings(content)
-    title = frontmatter_values.get("title") or (headings[0] if headings else None)
-    return _NoteMetadata(
+    title = frontmatter_metadata.title or (headings[0] if headings else None)
+    return NoteMetadata(
         title=title,
-        page_type=frontmatter_values.get("type"),
-        tags=_frontmatter_tags(frontmatter),
+        page_type=frontmatter_metadata.page_type,
+        tags=frontmatter_metadata.tags,
         headings=headings,
     )
 
@@ -150,37 +133,45 @@ def _frontmatter(content: str) -> str:
     return ""
 
 
-def _frontmatter_values(frontmatter: str) -> dict[str, str]:
-    values: dict[str, str] = {}
-    for line in frontmatter.splitlines():
-        key, separator, raw_value = line.partition(":")
-        if separator and raw_value.strip():
-            values[key.strip()] = _normalize_frontmatter_scalar(raw_value)
-    return values
-
-
-def _frontmatter_tags(frontmatter: str) -> list[str]:
-    lines = frontmatter.splitlines()
+def _frontmatter_metadata(frontmatter: str) -> FrontmatterMetadata:
+    """지원하는 YAML front matter 필드만 DTO로 옮기고 나머지 raw 필드는 무시합니다."""
+    title: str | None = None
+    page_type: str | None = None
     tags: list[str] = []
+    lines = frontmatter.splitlines()
+
     for index, line in enumerate(lines):
         key, separator, raw_value = line.partition(":")
-        if key.strip() != "tags" or not separator:
+        if not separator:
             continue
-        stripped_value = raw_value.strip()
-        if stripped_value.startswith("[") and stripped_value.endswith("]"):
-            return [
-                _normalize_frontmatter_scalar(part)
-                for part in stripped_value[1:-1].split(",")
-                if part.strip()
-            ]
-        for following_line in lines[index + 1 :]:
-            stripped_line = following_line.strip()
-            if not stripped_line.startswith("-"):
-                break
-            tag = _normalize_frontmatter_scalar(stripped_line[1:])
-            if tag:
-                tags.append(tag)
-        return tags
+        key_name = key.strip()
+        if key_name == "title" and raw_value.strip():
+            title = _normalize_frontmatter_scalar(raw_value)
+        elif key_name == "type" and raw_value.strip():
+            page_type = _normalize_frontmatter_scalar(raw_value)
+        elif key_name == "tags":
+            tags = _frontmatter_tags(lines, index, raw_value)
+
+    return FrontmatterMetadata(title=title, page_type=page_type, tags=tags)
+
+
+def _frontmatter_tags(lines: list[str], index: int, raw_value: str) -> list[str]:
+    stripped_value = raw_value.strip()
+    if stripped_value.startswith("[") and stripped_value.endswith("]"):
+        return [
+            _normalize_frontmatter_scalar(part)
+            for part in stripped_value[1:-1].split(",")
+            if part.strip()
+        ]
+
+    tags: list[str] = []
+    for following_line in lines[index + 1 :]:
+        stripped_line = following_line.strip()
+        if not stripped_line.startswith("-"):
+            break
+        tag = _normalize_frontmatter_scalar(stripped_line[1:])
+        if tag:
+            tags.append(tag)
     return tags
 
 
@@ -199,61 +190,8 @@ def _headings(content: str) -> list[str]:
     return headings
 
 
-def _score_note(
-    relative_path: str,
-    content: str,
-    metadata: _NoteMetadata,
-    query: str,
-    terms: list[str],
-) -> float:
-    path_lower = relative_path.lower()
-    content_lower = content.lower()
-    query_lower = query.lower()
-    title_lower = (metadata.title or "").lower()
-    page_type_lower = (metadata.page_type or "").lower()
-    tags_lower = " ".join(metadata.tags).lower()
-    headings_lower = "\n".join(metadata.headings).lower()
-
-    score = 0.0
-    if query_lower in content_lower:
-        score += 5.0
-    if query_lower in path_lower:
-        score += 8.0
-    if query_lower in title_lower:
-        score += 12.0
-
-    for term in terms:
-        if term in title_lower:
-            score += 10.0
-        if term in path_lower:
-            score += 6.0
-        if term in page_type_lower:
-            score += 4.0
-        if term in tags_lower:
-            score += 5.0
-        score += min(headings_lower.count(term), 3) * 4.0
-        score += min(content_lower.count(term), 10) * 1.0
-
-    if score <= 0:
-        return 0.0
-    score += _structure_boost(relative_path)
-    return score
-
-
-def _structure_boost(relative_path: str) -> float:
-    path = Path(relative_path)
-    if relative_path == "index.md":
-        return 8.0
-    if relative_path == "SCHEMA.md":
-        return 5.0
-    if path.parts and path.parts[0] in SYNTHESIZED_PAGE_DIRS:
-        return 2.0
-    if path.parts and path.parts[0] == "raw":
-        return -10.0
-    return 0.0
-
-
 def _line_matches(content: str, query: str, terms: list[str]) -> list[LineMatch]:
+    """검색어가 걸린 줄 주변을 최대 3개 뽑아 결과 미리보기 snippet으로 제공합니다."""
     lines = content.splitlines()
     query_lower = query.lower()
     matches: list[LineMatch] = []
@@ -274,6 +212,7 @@ def _line_matches(content: str, query: str, terms: list[str]) -> list[LineMatch]
 
 
 def _snippet(lines: list[str], center_index: int) -> str:
+    """중심 줄 앞뒤 한 줄을 합쳐 MCP search response에 넣을 짧은 문맥을 만듭니다."""
     start = max(0, center_index - 1)
     end = min(len(lines), center_index + 2)
     snippet = "\n".join(line.strip() for line in lines[start:end] if line.strip())
