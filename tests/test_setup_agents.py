@@ -1,8 +1,9 @@
 from pathlib import Path
 
 from pytest import MonkeyPatch
+from setup_support import cli
 from setup_support.codex_config import add_codex_mcp_server
-from setup_support.config import build_server_url, load_env, resolve_config
+from setup_support.config import ResolvedConfig, build_server_url, load_env, resolve_config
 
 
 def test_load_env는_dotenv를_읽고_process_env가_우선한다(tmp_path: Path) -> None:
@@ -83,6 +84,58 @@ def test_resolve_config는_agent별_기본_server_name과_env_path를_정한다(
     assert claude.server_url == "http://127.0.0.1:18083/mcp"
     assert claude.claude_skill_dest == tmp_path / "claude-skills" / "llm-wiki"
     assert codex.codex_config_path == tmp_path / "codex" / "config.toml"
+
+
+def test_setup_cli는_agent_옵션이_없으면_전체_agent를_설치한다(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    installed_agents: list[str] = []
+
+    def fake_install_agent(config: ResolvedConfig) -> int:
+        installed_agents.append(config.agent)
+        return 0
+
+    monkeypatch.setattr(cli, "install_agent", fake_install_agent)
+    env_file = tmp_path / ".env"
+    env_file.write_text("KB_PORT=18083\n", encoding="utf-8")
+
+    result = cli.run(["--env-file", str(env_file), "--dry-run"])
+
+    assert result == 0
+    assert installed_agents == ["hermes", "claude", "codex"]
+
+
+def test_setup_cli는_agent_옵션으로_일부_agent만_설치한다(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    installed_agents: list[str] = []
+
+    def fake_install_agent(config: ResolvedConfig) -> int:
+        installed_agents.append(config.agent)
+        return 0
+
+    monkeypatch.setattr(cli, "install_agent", fake_install_agent)
+    env_file = tmp_path / ".env"
+    env_file.write_text("KB_PORT=18083\n", encoding="utf-8")
+
+    result = cli.run(
+        [
+            "--env-file",
+            str(env_file),
+            "--dry-run",
+            "--agent",
+            "codex",
+            "--agent",
+            "claude",
+            "--agent",
+            "codex",
+        ]
+    )
+
+    assert result == 0
+    assert installed_agents == ["codex", "claude"]
 
 
 def test_codex_config는_기존_server_name을_덮어쓰지_않는다(tmp_path: Path) -> None:

@@ -1,1 +1,1 @@
-"""Reusable installer support for LLM Wiki agent setup scripts."""
+"""Reusable installer support for the LLM Wiki agent setup entrypoint."""

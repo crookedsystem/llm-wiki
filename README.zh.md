@@ -98,30 +98,30 @@ mcp_servers:
 
 ## 用于 LLM Wiki workflow 的 agent integration
 
-本 repository 包含可直接复制的 MCP snippet、一个 canonical agent skill，以及基于 uv 的 setup script，用于让 Hermes/Hermess、Claude Code 和 Codex 将该服务器作为 Obsidian/Markdown LLM Wiki bridge 使用。
+本 repository 包含可直接复制的 MCP snippet、一个 canonical agent skill，以及基于 uv 的 setup entrypoint，用于让 Hermes/Hermess、Claude Code 和 Codex 将该服务器作为 Obsidian/Markdown LLM Wiki bridge 使用。
 
 预期 workflow 如下：
 
 1. 将 `.env.example` 复制为 `.env`，并为要运行的服务器设置 `KB_VAULT_PATH`、`KB_HOST`、`KB_PORT` 和 `KB_MCP_PATH`。
 2. 使用 `uv run llm-wiki` 运行 MCP 服务器。
-3. 为要连接的每个 agent 运行 setup script。
+3. 运行 setup entrypoint。默认会安装所有支持的 agent；如只安装部分 agent，请传入 `--agent`。
 4. 重启 agent session，使 MCP tool 和 skill 重新加载。
 
 ### Agent integration 文件
 
-| Agent | MCP snippet | Skill source | Setup wrapper | Python entrypoint |
-| --- | --- | --- | --- | --- |
-| Hermes/Hermess | `mcp/hermess.yaml` | `skills/llm-wiki/` | `scripts/setup-hermess.sh` | `uv run python scripts/setup_agents.py hermes` |
-| Claude Code | `mcp/claude.json` | `skills/llm-wiki/` | `scripts/setup-claude.sh` | `uv run python scripts/setup_agents.py claude` |
-| Codex | `mcp/codex.toml` | `skills/llm-wiki/` | `scripts/setup-codex.sh` | `uv run python scripts/setup_agents.py codex` |
+| Agent | MCP snippet | Skill source | Install command |
+| --- | --- | --- | --- |
+| Hermes/Hermess | `mcp/hermess.yaml` | `skills/llm-wiki/` | `uv run python scripts/main.py --agent hermes` |
+| Claude Code | `mcp/claude.json` | `skills/llm-wiki/` | `uv run python scripts/main.py --agent claude` |
+| Codex | `mcp/codex.toml` | `skills/llm-wiki/` | `uv run python scripts/main.py --agent codex` |
 
-Shell wrapper 只负责定位 repository，并通过 `uv` 调用共享的 Python 实现。可复用代码位于 `scripts/setup_support/`，因此 env 读取、MCP URL 解析、skill 复制、重复检查和 Codex TOML 编辑都走同一套代码。
+Setup entrypoint 是 `scripts/main.py`。不传 `--agent` 运行时，会一次安装 Hermes/Hermess、Claude Code 和 Codex。可复用代码位于 `scripts/setup_support/`，因此 env 读取、MCP URL 解析、skill 复制、重复检查和 Codex TOML 编辑都走同一套代码。
 
 该 skill 有意保持 single-source：所有 agent 都安装同一个 `skills/llm-wiki/SKILL.md`。Agent-specific 差异只存在于 setup code，以及 skill 的 “Agent-specific MCP names” 部分。
 
-### Setup script 会读取 `.env`
+### Setup entrypoint 会读取 `.env`
 
-Setup script 默认读取 repository 的 `.env`，并允许已 export 的 shell 变量覆盖 `.env`。如果要使用其他 dotenv 文件，请传入 `--env-file /path/to/file`。
+Setup entrypoint 默认读取 repository 的 `.env`，并允许已 export 的 shell 变量覆盖 `.env`。如果要使用其他 dotenv 文件，请传入 `--env-file /path/to/file`。
 
 MCP URL 解析顺序：
 
@@ -150,9 +150,7 @@ Setup 只在 server 缺失时添加：
 ### 设置 Hermes/Hermess
 
 ```bash
-scripts/setup-hermess.sh
-# 或直接运行：
-uv run python scripts/setup_agents.py hermes
+uv run python scripts/main.py --agent hermes
 ```
 
 它会执行：
@@ -166,9 +164,7 @@ uv run python scripts/setup_agents.py hermes
 ### 设置 Claude Code
 
 ```bash
-scripts/setup-claude.sh
-# 或直接运行：
-uv run python scripts/setup_agents.py claude
+uv run python scripts/main.py --agent claude
 ```
 
 它会执行：
@@ -182,9 +178,7 @@ uv run python scripts/setup_agents.py claude
 ### 设置 Codex
 
 ```bash
-scripts/setup-codex.sh
-# 或直接运行：
-uv run python scripts/setup_agents.py codex
+uv run python scripts/main.py --agent codex
 ```
 
 它会执行：
@@ -194,11 +188,25 @@ uv run python scripts/setup_agents.py codex
 
 修改 `config.toml` 或 skill 文件后，请重启 Codex。
 
-### Setup script option
+### Setup entrypoint option
 
-所有 setup script 都支持：
+安装所有支持的 agent：
 
 ```bash
+uv run python scripts/main.py
+```
+
+只安装部分 agent 时，请传入一次或多次 `--agent`：
+
+```bash
+uv run python scripts/main.py --agent claude
+uv run python scripts/main.py --agent claude --agent codex
+```
+
+Setup entrypoint 支持：
+
+```bash
+--agent {hermes,claude,codex}  # 可重复；省略则安装所有 agent
 --dry-run                 # 只打印将执行的操作，不写文件或修改 agent config
 --env-file PATH           # 默认值: repository .env
 --server-url URL          # override .env MCP URL resolution

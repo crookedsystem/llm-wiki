@@ -7,35 +7,46 @@ from pathlib import Path
 from setup_support.config import DEFAULT_SERVER_NAMES, repo_root_from_script, resolve_config
 from setup_support.installers import install_agent
 
+AGENTS = tuple(DEFAULT_SERVER_NAMES)
+
 
 def run(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     repo_root = repo_root_from_script(__file__)
-    config = resolve_config(
-        agent=args.agent,
-        repo_root=repo_root,
-        env_file=Path(args.env_file) if args.env_file else None,
-        server_name=args.server_name,
-        server_url=args.server_url,
-        dry_run=args.dry_run,
-        claude_scope=args.scope,
-        codex_config_path=args.config,
-    )
-    print(f"Using env file: {config.env_file}")
-    print(f"Resolved MCP server: {config.server_name} -> {config.server_url}")
-    return install_agent(config)
+    status = 0
+    for agent in selected_agents(args.agent):
+        config = resolve_config(
+            agent=agent,
+            repo_root=repo_root,
+            env_file=Path(args.env_file) if args.env_file else None,
+            server_name=args.server_name,
+            server_url=args.server_url,
+            dry_run=args.dry_run,
+            claude_scope=args.scope,
+            codex_config_path=args.config,
+        )
+        print(f"== {agent} ==")
+        print(f"Using env file: {config.env_file}")
+        print(f"Resolved MCP server: {config.server_name} -> {config.server_url}")
+        result = install_agent(config)
+        if result != 0:
+            status = result
+    return status
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Install LLM Wiki MCP and skill configuration for Hermes/Hermess, "
-            "Claude Code, or Codex."
+            "Claude Code, and Codex."
         ),
     )
     parser.add_argument(
-        "agent", choices=sorted(DEFAULT_SERVER_NAMES), help="agent integration to configure"
+        "--agent",
+        choices=AGENTS,
+        action="append",
+        help="agent integration to configure; repeatable, defaults to all agents",
     )
     parser.add_argument(
         "--dry-run",
@@ -52,6 +63,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--config", help="Codex config path; defaults to CODEX_CONFIG_PATH or ~/.codex/config.toml"
     )
     return parser
+
+
+def selected_agents(requested_agents: list[str] | None) -> list[str]:
+    if requested_agents is None:
+        return list(AGENTS)
+    return list(dict.fromkeys(requested_agents))
 
 
 if __name__ == "__main__":

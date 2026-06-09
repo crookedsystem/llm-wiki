@@ -98,30 +98,30 @@ mcp_servers:
 
 ## LLM Wiki workflow 用 agent integration
 
-この repository には、Hermes/Hermess、Claude Code、Codex からこのサーバーを Obsidian/Markdown LLM Wiki bridge として使うための、コピーして使える MCP snippet、単一の canonical agent skill、uv ベースの setup script が含まれています。
+この repository には、Hermes/Hermess、Claude Code、Codex からこのサーバーを Obsidian/Markdown LLM Wiki bridge として使うための、コピーして使える MCP snippet、単一の canonical agent skill、uv ベースの setup entrypoint が含まれています。
 
 想定 workflow は次のとおりです：
 
 1. `.env.example` を `.env` にコピーし、実行するサーバーに合わせて `KB_VAULT_PATH`、`KB_HOST`、`KB_PORT`、`KB_MCP_PATH` を設定します。
 2. `uv run llm-wiki` で MCP サーバーを実行します。
-3. 接続したい agent ごとに setup script を実行します。
+3. Setup entrypoint を実行します。デフォルトでは対応するすべての agent をインストールし、一部だけを対象にする場合は `--agent` を渡します。
 4. MCP tool と skill が再読み込みされるように agent session を再起動します。
 
 ### Agent integration 用ファイル
 
-| Agent | MCP snippet | Skill source | Setup wrapper | Python entrypoint |
-| --- | --- | --- | --- | --- |
-| Hermes/Hermess | `mcp/hermess.yaml` | `skills/llm-wiki/` | `scripts/setup-hermess.sh` | `uv run python scripts/setup_agents.py hermes` |
-| Claude Code | `mcp/claude.json` | `skills/llm-wiki/` | `scripts/setup-claude.sh` | `uv run python scripts/setup_agents.py claude` |
-| Codex | `mcp/codex.toml` | `skills/llm-wiki/` | `scripts/setup-codex.sh` | `uv run python scripts/setup_agents.py codex` |
+| Agent | MCP snippet | Skill source | Install command |
+| --- | --- | --- | --- |
+| Hermes/Hermess | `mcp/hermess.yaml` | `skills/llm-wiki/` | `uv run python scripts/main.py --agent hermes` |
+| Claude Code | `mcp/claude.json` | `skills/llm-wiki/` | `uv run python scripts/main.py --agent claude` |
+| Codex | `mcp/codex.toml` | `skills/llm-wiki/` | `uv run python scripts/main.py --agent codex` |
 
-Shell wrapper は repository の位置を見つけ、`uv` 経由で共通の Python 実装を呼び出すだけです。再利用コードは `scripts/setup_support/` にあり、env 読み込み、MCP URL 解決、skill コピー、重複チェック、Codex TOML 編集をすべての agent が同じコードパスで使います。
+Setup entrypoint は `scripts/main.py` です。`--agent` なしで実行すると Hermes/Hermess、Claude Code、Codex を一度にインストールします。再利用コードは `scripts/setup_support/` にあり、env 読み込み、MCP URL 解決、skill コピー、重複チェック、Codex TOML 編集をすべての agent が同じコードパスで使います。
 
 この skill は意図的に single-source 構成です。すべての agent が同じ `skills/llm-wiki/SKILL.md` をインストールします。Agent-specific な違いは setup code と、skill 内の「Agent-specific MCP names」セクションにあります。
 
-### Setup script は `.env` を読みます
+### Setup entrypoint は `.env` を読みます
 
-Setup script はデフォルトで repository の `.env` を読み、すでに export されている shell 変数があれば `.env` より優先します。別の dotenv ファイルを使う場合は `--env-file /path/to/file` を渡します。
+Setup entrypoint はデフォルトで repository の `.env` を読み、すでに export されている shell 変数があれば `.env` より優先します。別の dotenv ファイルを使う場合は `--env-file /path/to/file` を渡します。
 
 MCP URL の解決順：
 
@@ -150,9 +150,7 @@ Setup は server が存在しない場合だけ追加します：
 ### Hermes/Hermess の設定
 
 ```bash
-scripts/setup-hermess.sh
-# または直接実行:
-uv run python scripts/setup_agents.py hermes
+uv run python scripts/main.py --agent hermes
 ```
 
 実行内容：
@@ -166,9 +164,7 @@ uv run python scripts/setup_agents.py hermes
 ### Claude Code の設定
 
 ```bash
-scripts/setup-claude.sh
-# または直接実行:
-uv run python scripts/setup_agents.py claude
+uv run python scripts/main.py --agent claude
 ```
 
 実行内容：
@@ -182,9 +178,7 @@ Project-scoped `.mcp.json` server を初めて開くとき、Claude が承認を
 ### Codex の設定
 
 ```bash
-scripts/setup-codex.sh
-# または直接実行:
-uv run python scripts/setup_agents.py codex
+uv run python scripts/main.py --agent codex
 ```
 
 実行内容：
@@ -194,11 +188,25 @@ uv run python scripts/setup_agents.py codex
 
 `config.toml` または skill file を変更した後は Codex を再起動してください。
 
-### Setup script option
+### Setup entrypoint option
 
-すべての setup script は次の option をサポートします：
+対応するすべての agent をインストールします：
 
 ```bash
+uv run python scripts/main.py
+```
+
+一部の agent だけをインストールするには、`--agent` を 1 回以上渡します：
+
+```bash
+uv run python scripts/main.py --agent claude
+uv run python scripts/main.py --agent claude --agent codex
+```
+
+Setup entrypoint は次の option をサポートします：
+
+```bash
+--agent {hermes,claude,codex}  # 繰り返し指定可能。省略するとすべての agent をインストール
 --dry-run                 # ファイル書き込みや agent config 変更をせず、実行予定の操作を表示
 --env-file PATH           # デフォルト: repository .env
 --server-url URL          # .env MCP URL resolution を override

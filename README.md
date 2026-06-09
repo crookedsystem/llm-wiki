@@ -98,30 +98,30 @@ mcp_servers:
 
 ## Agent integrations for LLM Wiki workflows
 
-This repository includes ready-to-copy MCP snippets, one canonical agent skill, and uv-based setup scripts for using the server as an Obsidian/Markdown LLM Wiki bridge from Hermes/Hermess, Claude Code, and Codex.
+This repository includes ready-to-copy MCP snippets, one canonical agent skill, and one uv-based setup entrypoint for using the server as an Obsidian/Markdown LLM Wiki bridge from Hermes/Hermess, Claude Code, and Codex.
 
 The expected flow is:
 
 1. Copy `.env.example` to `.env` and set `KB_VAULT_PATH`, `KB_HOST`, `KB_PORT`, and `KB_MCP_PATH` for the server you will run.
 2. Run the MCP server with `uv run llm-wiki`.
-3. Run the setup script for each agent you want to connect.
+3. Run the setup entrypoint. By default it installs every supported agent; pass `--agent` to install a subset.
 4. Restart the agent session so MCP tools and skills are reloaded.
 
 ### Files for agent integrations
 
-| Agent | MCP snippet | Skill source | Setup wrapper | Python entrypoint |
-| --- | --- | --- | --- | --- |
-| Hermes/Hermess | `mcp/hermess.yaml` | `skills/llm-wiki/` | `scripts/setup-hermess.sh` | `uv run python scripts/setup_agents.py hermes` |
-| Claude Code | `mcp/claude.json` | `skills/llm-wiki/` | `scripts/setup-claude.sh` | `uv run python scripts/setup_agents.py claude` |
-| Codex | `mcp/codex.toml` | `skills/llm-wiki/` | `scripts/setup-codex.sh` | `uv run python scripts/setup_agents.py codex` |
+| Agent | MCP snippet | Skill source | Install command |
+| --- | --- | --- | --- |
+| Hermes/Hermess | `mcp/hermess.yaml` | `skills/llm-wiki/` | `uv run python scripts/main.py --agent hermes` |
+| Claude Code | `mcp/claude.json` | `skills/llm-wiki/` | `uv run python scripts/main.py --agent claude` |
+| Codex | `mcp/codex.toml` | `skills/llm-wiki/` | `uv run python scripts/main.py --agent codex` |
 
-The shell wrappers only locate the repository and call the shared Python implementation through `uv`. The reusable code lives under `scripts/setup_support/`, so env loading, MCP URL resolution, skill copying, duplicate detection, and Codex TOML editing use the same path for every agent.
+The setup entrypoint is `scripts/main.py`. Run it without `--agent` to install Hermes/Hermess, Claude Code, and Codex in one pass. The reusable code lives under `scripts/setup_support/`, so env loading, MCP URL resolution, skill copying, duplicate detection, and Codex TOML editing use the same path for every agent.
 
 The skill is intentionally single-source: all agents install the same `skills/llm-wiki/SKILL.md`. Agent-specific differences live in setup code and in the skill's "Agent-specific MCP names" section.
 
-### Setup scripts read `.env`
+### Setup entrypoint reads `.env`
 
-The setup scripts read the repository `.env` by default and then let already-exported shell variables override it. Pass `--env-file /path/to/file` to use another dotenv file.
+The setup entrypoint reads the repository `.env` by default and then lets already-exported shell variables override it. Pass `--env-file /path/to/file` to use another dotenv file.
 
 MCP URL resolution order:
 
@@ -150,9 +150,7 @@ If a matching server exists, setup prints why it skipped and leaves the existing
 ### Setup Hermes/Hermess
 
 ```bash
-scripts/setup-hermess.sh
-# or directly:
-uv run python scripts/setup_agents.py hermes
+uv run python scripts/main.py --agent hermes
 ```
 
 What it does:
@@ -166,9 +164,7 @@ After setup, restart Hermes or use `/reload-mcp` in an existing session if avail
 ### Setup Claude Code
 
 ```bash
-scripts/setup-claude.sh
-# or directly:
-uv run python scripts/setup_agents.py claude
+uv run python scripts/main.py --agent claude
 ```
 
 What it does:
@@ -182,9 +178,7 @@ Claude may ask you to approve project-scoped `.mcp.json` servers the first time 
 ### Setup Codex
 
 ```bash
-scripts/setup-codex.sh
-# or directly:
-uv run python scripts/setup_agents.py codex
+uv run python scripts/main.py --agent codex
 ```
 
 What it does:
@@ -194,11 +188,25 @@ What it does:
 
 Restart Codex after changing `config.toml` or skill files.
 
-### Setup script options
+### Setup entrypoint options
 
-All setup scripts support:
+Install all supported agents:
 
 ```bash
+uv run python scripts/main.py
+```
+
+Install selected agents by passing `--agent` one or more times:
+
+```bash
+uv run python scripts/main.py --agent claude
+uv run python scripts/main.py --agent claude --agent codex
+```
+
+The setup entrypoint supports:
+
+```bash
+--agent {hermes,claude,codex}  # repeatable; omit to install all agents
 --dry-run                 # print actions without writing files or changing agent config
 --env-file PATH           # default: repository .env
 --server-url URL          # override .env MCP URL resolution
