@@ -29,12 +29,33 @@ Edit `.env`, especially `KB_VAULT_PATH`.
 
 ### Configure the LLM Wiki vault
 
-`llm-wiki` has two separate roots:
+Think of `llm-wiki` as two different folders.
 
-- This repository is the server source code (`src/`, `tests/`, `scripts/`).
-- `KB_VAULT_PATH` is the Markdown content root that the MCP tools read and write.
+The `llm-wiki` repository is the program code:
 
-Set `KB_VAULT_PATH` to the same directory you want to open in Obsidian:
+```text
+/home/alice/projects/llm-wiki/
+├── src/        # server code
+├── tests/
+├── scripts/
+└── ...
+```
+
+`KB_VAULT_PATH` is the Markdown vault that stores knowledge:
+
+```text
+/home/alice/Obsidian/LLM Wiki/
+├── SCHEMA.md
+├── index.md
+├── log.md
+├── raw/
+├── entities/
+├── concepts/
+├── comparisons/
+└── queries/
+```
+
+Set `.env` so `KB_VAULT_PATH` points at the second folder:
 
 ```env
 KB_VAULT_PATH=/home/alice/Obsidian/LLM Wiki
@@ -43,31 +64,23 @@ KB_PORT=9999
 KB_MCP_PATH=/mcp
 ```
 
-Do not point `KB_VAULT_PATH` at this repository's `src/` directory or at an Obsidian `.obsidian/` config directory. It should point at the vault root that contains the LLM Wiki files.
+Do not set `KB_VAULT_PATH` to `llm-wiki/src` or to an Obsidian `.obsidian/` settings folder. It must point at the vault root that contains `SCHEMA.md`, `index.md`, and `log.md`.
 
-Recommended vault layout:
+Most important:
 
 ```text
-$KB_VAULT_PATH/
-├── SCHEMA.md           # domain, frontmatter, tag, and page rules
-├── index.md            # catalog of wiki pages with one-line summaries
-├── log.md              # append-only wiki action log
-├── raw/                # immutable source material
-│   ├── articles/
-│   ├── papers/
-│   ├── transcripts/
-│   └── assets/         # Obsidian attachments and images
-├── entities/           # people, orgs, products, models
-├── concepts/           # concepts and topics
-├── comparisons/        # side-by-side analyses
-└── queries/            # durable query answers worth keeping
+llm-wiki repository src/       = server code
+KB_VAULT_PATH raw/             = original/source material
+KB_VAULT_PATH entities/...     = synthesized wiki pages
 ```
 
-`raw/` is the vault's source-material area; the repository `src/` directory is only application code. Agents should search/read `SCHEMA.md`, `index.md`, and recent `log.md` before creating or updating pages.
+Agents should read `SCHEMA.md`, `index.md`, and recent `log.md` before writing.
 
 ### Connect Obsidian
 
-Open `KB_VAULT_PATH` as an Obsidian vault. No separate connector is required: Obsidian and the MCP server operate on the same Markdown files. For best results, set Obsidian's attachment folder to `raw/assets/`, keep Wikilinks enabled, and optionally install Dataview for YAML-frontmatter queries. If you use Obsidian Sync, sync this same vault directory across devices.
+No separate connector is needed. In Obsidian, use **Open folder as vault** and open the same folder configured as `KB_VAULT_PATH`. Obsidian and the MCP server read and write the same Markdown files.
+
+Recommended: set Obsidian's attachment folder to `raw/assets/`, keep Wikilinks enabled, install Dataview if you need YAML frontmatter queries, and sync this same folder if you use Obsidian Sync.
 
 ## Run
 

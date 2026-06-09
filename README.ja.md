@@ -29,12 +29,33 @@ cp .env.example .env
 
 ### LLM Wiki vault の設定
 
-`llm-wiki` には別々の 2 つの root があります：
+`llm-wiki` では 2 つのフォルダを分けて考えてください。
 
-- この repository は server source code です（`src/`, `tests/`, `scripts/`）。
-- `KB_VAULT_PATH` は MCP tool が読み書きする Markdown content root です。
+`llm-wiki` repository はプログラムコードを置く Git repo です:
 
-`KB_VAULT_PATH` は Obsidian で開く vault と同じ directory に設定してください：
+```text
+/home/alice/projects/llm-wiki/
+├── src/        # server code
+├── tests/
+├── scripts/
+└── ...
+```
+
+`KB_VAULT_PATH` は実際の知識文書を保存する Markdown vault です:
+
+```text
+/home/alice/Obsidian/LLM Wiki/
+├── SCHEMA.md
+├── index.md
+├── log.md
+├── raw/
+├── entities/
+├── concepts/
+├── comparisons/
+└── queries/
+```
+
+`.env` では `KB_VAULT_PATH` を 2 つ目のフォルダに設定してください:
 
 ```env
 KB_VAULT_PATH=/home/alice/Obsidian/LLM Wiki
@@ -43,31 +64,23 @@ KB_PORT=9999
 KB_MCP_PATH=/mcp
 ```
 
-`KB_VAULT_PATH` をこの repository の `src/` directory や Obsidian の `.obsidian/` config directory に向けないでください。`SCHEMA.md`, `index.md`, `log.md` を含む vault root を指す必要があります。
+`KB_VAULT_PATH` を `llm-wiki/src` や Obsidian の `.obsidian/` 設定フォルダにしてはいけません。`SCHEMA.md`, `index.md`, `log.md` が入っている vault root を指す必要があります。
 
-推奨 vault 構造：
+最も重要な区別はこれです:
 
 ```text
-$KB_VAULT_PATH/
-├── SCHEMA.md           # domain, frontmatter, tag, page rule
-├── index.md            # wiki page catalog と 1 行 summary
-├── log.md              # append-only wiki action log
-├── raw/                # immutable source material
-│   ├── articles/
-│   ├── papers/
-│   ├── transcripts/
-│   └── assets/         # Obsidian attachments/images
-├── entities/           # people, orgs, products, models
-├── concepts/           # concepts and topics
-├── comparisons/        # side-by-side analyses
-└── queries/            # durable query answers
+llm-wiki repository の src/    = server code
+KB_VAULT_PATH の raw/          = original/source material
+KB_VAULT_PATH の entities/...  = synthesized wiki pages
 ```
 
-`raw/` は vault 内の source-material area で、repository の `src/` は application code 専用です。Agent は page を作成・更新する前に、`SCHEMA.md`, `index.md`, 最近の `log.md` を先に読む必要があります。
+Agent は文書を作成・更新する前に `SCHEMA.md`, `index.md`, 最近の `log.md` を先に読む必要があります。
 
 ### Obsidian 接続
 
-Obsidian で `KB_VAULT_PATH` を vault として開くだけです。別の connector は不要です。Obsidian と MCP server は同じ Markdown files を操作します。推奨設定は attachment folder を `raw/assets/` にし、Wikilinks を有効に保ち、必要に応じて YAML frontmatter query 用に Dataview plugin を入れることです。Obsidian Sync を使う場合も、この同じ vault directory を同期してください。
+別の connector は不要です。Obsidian で **Open folder as vault** を使い、`KB_VAULT_PATH` と同じフォルダを開いてください。Obsidian と MCP server は同じ Markdown files を読み書きします。
+
+推奨設定は attachment folder を `raw/assets/` にし、Wikilinks を有効に保ち、YAML frontmatter query が必要なら Dataview plugin を入れることです。Obsidian Sync を使う場合も、この同じ vault folder を同期してください。
 
 ## 実行
 

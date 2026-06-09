@@ -29,12 +29,33 @@ cp .env.example .env
 
 ### LLM Wiki vault 설정
 
-`llm-wiki`에는 서로 다른 두 root가 있습니다:
+`llm-wiki`에서는 두 폴더를 분리해서 생각해야 합니다.
 
-- 이 repository는 서버 소스 코드입니다(`src/`, `tests/`, `scripts/`).
-- `KB_VAULT_PATH`는 MCP tool이 읽고 쓰는 Markdown 콘텐츠 root입니다.
+`llm-wiki` repository는 프로그램 코드가 있는 Git repo입니다:
 
-`KB_VAULT_PATH`는 Obsidian에서 열 vault와 같은 디렉터리로 설정하세요:
+```text
+/home/alice/projects/llm-wiki/
+├── src/        # 서버 코드
+├── tests/
+├── scripts/
+└── ...
+```
+
+`KB_VAULT_PATH`는 실제 지식 문서가 저장되는 Markdown vault입니다:
+
+```text
+/home/alice/Obsidian/LLM Wiki/
+├── SCHEMA.md
+├── index.md
+├── log.md
+├── raw/
+├── entities/
+├── concepts/
+├── comparisons/
+└── queries/
+```
+
+`.env`에서는 `KB_VAULT_PATH`를 두 번째 폴더로 지정하세요:
 
 ```env
 KB_VAULT_PATH=/home/alice/Obsidian/LLM Wiki
@@ -43,31 +64,23 @@ KB_PORT=9999
 KB_MCP_PATH=/mcp
 ```
 
-`KB_VAULT_PATH`를 이 repository의 `src/` 디렉터리나 Obsidian `.obsidian/` 설정 디렉터리로 지정하지 마세요. `SCHEMA.md`, `index.md`, `log.md`가 들어있는 vault root를 가리켜야 합니다.
+`KB_VAULT_PATH`를 `llm-wiki/src`나 Obsidian `.obsidian/` 설정 폴더로 지정하면 안 됩니다. `SCHEMA.md`, `index.md`, `log.md`가 들어있는 vault root를 가리켜야 합니다.
 
-권장 vault 구조:
+제일 중요한 구분은 이겁니다:
 
 ```text
-$KB_VAULT_PATH/
-├── SCHEMA.md           # domain, frontmatter, tag, page rule
-├── index.md            # wiki page catalog와 한 줄 요약
-├── log.md              # append-only wiki action log
-├── raw/                # immutable source material
-│   ├── articles/
-│   ├── papers/
-│   ├── transcripts/
-│   └── assets/         # Obsidian attachment/image
-├── entities/           # 사람, 조직, 제품, 모델
-├── concepts/           # 개념과 topic
-├── comparisons/        # 비교 분석
-└── queries/            # 다시 볼 가치가 있는 query 답변
+llm-wiki repository의 src/     = 서버 코드
+KB_VAULT_PATH의 raw/           = 원본 자료 저장소
+KB_VAULT_PATH의 entities/...   = 정리된 위키 문서
 ```
 
-`raw/`는 vault 안의 source-material 영역이고, repository의 `src/`는 애플리케이션 코드 전용입니다. Agent는 page를 만들거나 수정하기 전에 `SCHEMA.md`, `index.md`, 최근 `log.md`를 먼저 읽어야 합니다.
+Agent는 문서를 만들거나 수정하기 전에 `SCHEMA.md`, `index.md`, 최근 `log.md`를 먼저 읽어야 합니다.
 
 ### Obsidian 연결
 
-Obsidian에서 `KB_VAULT_PATH`를 vault로 열면 됩니다. 별도 connector는 필요 없습니다. Obsidian과 MCP 서버가 같은 Markdown 파일을 사용합니다. 권장 설정은 attachment folder를 `raw/assets/`로 지정하고, Wikilinks를 켜둔 상태를 유지하며, YAML frontmatter query가 필요하면 Dataview plugin을 설치하는 것입니다. Obsidian Sync를 쓴다면 이 동일한 vault 디렉터리를 동기화하세요.
+별도 connector는 필요 없습니다. Obsidian에서 **Open folder as vault**로 `KB_VAULT_PATH`와 같은 폴더를 열면 됩니다. Obsidian과 MCP 서버가 같은 Markdown 파일을 읽고 씁니다.
+
+권장 설정은 attachment folder를 `raw/assets/`로 지정하고, Wikilinks를 켜둔 상태로 유지하며, YAML frontmatter query가 필요하면 Dataview plugin을 설치하는 것입니다. Obsidian Sync를 쓴다면 이 동일한 vault 폴더를 동기화하세요.
 
 ## 실행
 
