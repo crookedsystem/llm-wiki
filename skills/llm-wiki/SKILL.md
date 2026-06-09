@@ -311,16 +311,18 @@ An LLM Wiki is an agent-maintained Markdown knowledge base where raw sources sta
 
 ## Hook-driven always-on usage
 
-Use hooks or wrappers to make LLM Wiki context part of every agent turn:
+Use hooks or wrappers to make LLM Wiki context part of every agent turn. The repository setup script installs reusable hook commands by default (`uv run python scripts/main.py`, or per-agent with `--agent`). Pass `--no-hooks` or set `LLM_WIKI_INSTALL_HOOKS=false` only when you want to wire hooks manually.
 
-- **User-input hook:** search the wiki at prompt time and inject a compact context block before the model starts working.
-- **Stop hook:** after the model finishes, run a wiki update pass that records durable discoveries, decisions, and changed context.
+The generated scripts call `scripts/agent_hooks/llm_wiki_agent_hook.py` in two modes:
+
+- **User-input hook:** search the wiki through `kb_search_notes` at prompt time and inject a compact `<llm-wiki-context>` block before the model starts working.
+- **Stop hook:** after the model finishes, force one final wiki update pass that records durable discoveries, decisions, and changed context through MCP.
 
 The hook should run every time, but it should not create noisy pages every time. If the task produced no durable knowledge, either write no content page or append only a compact `hook-sync` log entry if the operator wants a full audit trail.
 
 ### Claude Code hook shape
 
-Claude Code supports project/user hook events such as `UserPromptSubmit` and `Stop`. A project can wire LLM Wiki scripts in `.claude/settings.json` with the same shape as other Claude hooks:
+Claude Code supports project/user hook events such as `UserPromptSubmit` and `Stop`. Setup installs `llm-wiki-context-hook.sh` and `llm-wiki-stop-hook.sh` under `${CLAUDE_HOOKS_DIR:-~/.claude/hooks/llm-wiki}/` and merges equivalent entries into `${CLAUDE_SETTINGS_PATH:-~/.claude/settings.json}`. A project-local `.claude/settings.json` can use the same shape if you prefer project hooks:
 
 ```json
 {
@@ -353,7 +355,7 @@ Claude Code supports project/user hook events such as `UserPromptSubmit` and `St
 
 `llm-wiki-context-hook.sh` should read the incoming prompt metadata from stdin when the agent provides it, query `kb_search_notes` or a local helper for `SCHEMA.md`, `index.md`, recent `log.md`, and topic matches, then print a compact context block to stdout. Keep it short enough that it helps rather than flooding the prompt.
 
-`llm-wiki-stop-hook.sh` should read the session/transcript metadata available to the hook, decide what durable knowledge changed, then use `kb_search_notes` plus `kb_write_note` to update pages, `index.md`, and `log.md` with optimistic concurrency.
+`llm-wiki-stop-hook.sh` should read the session/transcript metadata available to the hook, decide what durable knowledge changed, then use `kb_search_notes` plus `kb_write_note` to update pages, `index.md`, and `log.md` with optimistic concurrency. The installed Claude stop hook emits a one-time `decision=block` response so Claude performs that update pass before its final stop; it must not block again when `stop_hook_active=true`.
 
 ### Hermes/Hermess and Codex enforcement pattern
 
@@ -364,9 +366,9 @@ Do not paste Claude hook JSON into Hermes or Codex configs unless those clients 
 3. At stop time, run an update pass that writes only durable knowledge and uses `content_hash`/`if_hash` for existing notes.
 4. If the client has no native user-input/stop hook, enforce this with a wrapper command, project instruction file, or client plugin that calls the same two scripts.
 
-For Hermes/Hermess, the minimum reliable setup is to install this skill, configure the `llm_wiki` MCP server, and start sessions with the skill loaded or explicitly call `/skill llm-wiki`. For stricter automation, implement a Hermes plugin or wrapper that prepends the input-time wiki context and runs the stop-time update pass after `hermes chat` completes.
+For Hermes/Hermess, setup installs this skill, configures the `llm_wiki` MCP server, and writes reusable hook commands under `${HERMES_LLM_WIKI_HOOKS_DIR:-${HERMES_HOME:-~/.hermes}/hooks/llm-wiki}/`. The minimum reliable setup is still to start sessions with the skill loaded or explicitly call `/skill llm-wiki`. For stricter automation, wire the generated context/stop scripts into a Hermes plugin, wrapper command, or future native hook support.
 
-For Codex, install this skill under `$CODEX_HOME/skills/llm-wiki/`, configure `[mcp_servers.llm_wiki]`, and put the input/stop contract in the project instructions or a wrapper if native hooks are unavailable.
+For Codex, setup installs this skill under `$CODEX_HOME/skills/llm-wiki/`, configures `[mcp_servers.llm_wiki]`, and writes reusable hook commands under `${CODEX_LLM_WIKI_HOOKS_DIR:-${CODEX_HOME:-~/.codex}/hooks/llm-wiki}/`. Put the input/stop contract in project instructions, a wrapper, or native Codex hooks if they are available in your installation.
 
 ## Safety rules
 

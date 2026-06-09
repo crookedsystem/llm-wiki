@@ -27,6 +27,11 @@ class ResolvedConfig:
     codex_home: Path
     codex_skills_dir: Path
     codex_config_path: Path
+    install_hooks: bool
+    hermes_hooks_dir: Path
+    claude_hooks_dir: Path
+    claude_settings_path: Path
+    codex_hooks_dir: Path
 
     @property
     def skill_source(self) -> Path:
@@ -96,6 +101,8 @@ def resolve_config(
     dry_run: bool = False,
     claude_scope: str | None = None,
     codex_config_path: str | None = None,
+    install_hooks: bool | None = None,
+    claude_settings_path: str | None = None,
 ) -> ResolvedConfig:
     effective_env_file = (env_file or repo_root / ".env").expanduser().resolve()
     env = load_env(effective_env_file, process_env)
@@ -112,6 +119,24 @@ def resolve_config(
     resolved_codex_config_path = Path(
         codex_config_path or env.get("CODEX_CONFIG_PATH", str(codex_home / "config.toml"))
     ).expanduser()
+    resolved_install_hooks = (
+        parse_bool(env.get("LLM_WIKI_INSTALL_HOOKS"), default=True)
+        if install_hooks is None
+        else install_hooks
+    )
+    hermes_hooks_dir = Path(
+        env.get("HERMES_LLM_WIKI_HOOKS_DIR", str(hermes_home / "hooks" / "llm-wiki"))
+    ).expanduser()
+    claude_hooks_dir = Path(
+        env.get("CLAUDE_HOOKS_DIR", str(Path.home() / ".claude" / "hooks" / "llm-wiki"))
+    ).expanduser()
+    resolved_claude_settings_path = Path(
+        claude_settings_path
+        or env.get("CLAUDE_SETTINGS_PATH", str(Path.home() / ".claude" / "settings.json"))
+    ).expanduser()
+    codex_hooks_dir = Path(
+        env.get("CODEX_LLM_WIKI_HOOKS_DIR", str(codex_home / "hooks" / "llm-wiki"))
+    ).expanduser()
 
     return ResolvedConfig(
         repo_root=repo_root,
@@ -127,6 +152,11 @@ def resolve_config(
         codex_home=codex_home,
         codex_skills_dir=codex_skills_dir,
         codex_config_path=resolved_codex_config_path,
+        install_hooks=resolved_install_hooks,
+        hermes_hooks_dir=hermes_hooks_dir,
+        claude_hooks_dir=claude_hooks_dir,
+        claude_settings_path=resolved_claude_settings_path,
+        codex_hooks_dir=codex_hooks_dir,
     )
 
 
@@ -141,3 +171,9 @@ def build_server_url(env: Mapping[str, str]) -> str:
         path = f"/{path}"
     display_host = host if host.startswith("[") or ":" not in host else f"[{host}]"
     return f"{scheme}://{display_host}:{port}{path}"
+
+
+def parse_bool(value: str | None, *, default: bool) -> bool:
+    if value is None or value == "":
+        return default
+    return value.strip().lower() not in {"0", "false", "no", "off"}

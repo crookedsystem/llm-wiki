@@ -5,6 +5,7 @@ from collections.abc import Callable
 
 from setup_support.codex_config import add_codex_mcp_server
 from setup_support.config import ResolvedConfig
+from setup_support.hooks import install_agent_hooks
 from setup_support.runner import CommandRunner, copy_directory
 
 
@@ -21,6 +22,7 @@ def install_hermes(config: ResolvedConfig) -> int:
     runner = CommandRunner(dry_run=config.dry_run)
     copy_directory(config.skill_source, config.hermes_skill_dest, dry_run=config.dry_run)
     print(f"Installed Hermes/Hermess skill: {config.hermes_skill_dest}")
+    install_agent_hooks(config)
 
     if not runner.command_exists("hermes"):
         print(
@@ -44,6 +46,7 @@ def install_claude(config: ResolvedConfig) -> int:
     runner = CommandRunner(dry_run=config.dry_run)
     copy_directory(config.skill_source, config.claude_skill_dest, dry_run=config.dry_run)
     print(f"Installed Claude skill: {config.claude_skill_dest}")
+    install_agent_hooks(config)
 
     if not runner.command_exists("claude"):
         print(
@@ -85,6 +88,7 @@ def install_claude(config: ResolvedConfig) -> int:
 def install_codex(config: ResolvedConfig) -> int:
     copy_directory(config.skill_source, config.codex_skill_dest, dry_run=config.dry_run)
     print(f"Installed Codex skill: {config.codex_skill_dest}")
+    install_agent_hooks(config)
     result = add_codex_mcp_server(
         config.codex_config_path,
         config.server_name,

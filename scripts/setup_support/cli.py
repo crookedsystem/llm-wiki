@@ -25,6 +25,8 @@ def run(argv: list[str] | None = None) -> int:
             dry_run=args.dry_run,
             claude_scope=args.scope,
             codex_config_path=args.config,
+            install_hooks=args.install_hooks,
+            claude_settings_path=args.claude_settings,
         )
         print(f"== {agent} ==")
         print(f"Using env file: {config.env_file}")
@@ -61,6 +63,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--scope", help="Claude MCP scope; defaults to CLAUDE_MCP_SCOPE or user")
     parser.add_argument(
         "--config", help="Codex config path; defaults to CODEX_CONFIG_PATH or ~/.codex/config.toml"
+    )
+    parser.add_argument(
+        "--no-hooks",
+        dest="install_hooks",
+        action="store_false",
+        default=None,
+        help="skip installing LLM Wiki input/stop hook scaffolds",
+    )
+    parser.add_argument(
+        "--claude-settings",
+        help=(
+            "Claude settings JSON path for hook merge; defaults to "
+            "CLAUDE_SETTINGS_PATH or ~/.claude/settings.json"
+        ),
     )
     return parser
 
