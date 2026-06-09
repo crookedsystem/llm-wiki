@@ -98,46 +98,68 @@ mcp_servers:
 
 ## Agent integrations for LLM Wiki workflows
 
-This repository includes ready-to-copy MCP snippets, one canonical agent skill, and setup scripts for using the server as an Obsidian/Markdown LLM Wiki bridge from Hermes/Hermess, Claude Code, and Codex.
+This repository includes ready-to-copy MCP snippets, one canonical agent skill, and uv-based setup scripts for using the server as an Obsidian/Markdown LLM Wiki bridge from Hermes/Hermess, Claude Code, and Codex.
 
 The expected flow is:
 
-1. Run the MCP server with `uv run llm-wiki`.
-2. Connect the agent to `http://127.0.0.1:9999/mcp`.
-3. Install the canonical `llm-wiki` skill so the agent knows the wiki conventions.
+1. Copy `.env.example` to `.env` and set `KB_VAULT_PATH`, `KB_HOST`, `KB_PORT`, and `KB_MCP_PATH` for the server you will run.
+2. Run the MCP server with `uv run llm-wiki`.
+3. Run the setup script for each agent you want to connect.
 4. Restart the agent session so MCP tools and skills are reloaded.
 
-### Files added for agent integrations
+### Files for agent integrations
 
-| Agent | MCP snippet | Skill source | Setup script |
-| --- | --- | --- | --- |
-| Hermes/Hermess | `mcp/hermess.yaml` | `skills/llm-wiki/` | `scripts/setup-hermess.sh` |
-| Claude Code | `mcp/claude.json` | `skills/llm-wiki/` | `scripts/setup-claude.sh` |
-| Codex | `mcp/codex.toml` | `skills/llm-wiki/` | `scripts/setup-codex.sh` |
+| Agent | MCP snippet | Skill source | Setup wrapper | Python entrypoint |
+| --- | --- | --- | --- | --- |
+| Hermes/Hermess | `mcp/hermess.yaml` | `skills/llm-wiki/` | `scripts/setup-hermess.sh` | `uv run python scripts/setup_agents.py hermes` |
+| Claude Code | `mcp/claude.json` | `skills/llm-wiki/` | `scripts/setup-claude.sh` | `uv run python scripts/setup_agents.py claude` |
+| Codex | `mcp/codex.toml` | `skills/llm-wiki/` | `scripts/setup-codex.sh` | `uv run python scripts/setup_agents.py codex` |
 
-The skill is intentionally single-source: all agents install the same `skills/llm-wiki/SKILL.md`. Agent-specific differences live in setup scripts and in the skill's "Agent-specific MCP names" section.
+The shell wrappers only locate the repository and call the shared Python implementation through `uv`. The reusable code lives under `scripts/setup_support/`, so env loading, MCP URL resolution, skill copying, duplicate detection, and Codex TOML editing use the same path for every agent.
+
+The skill is intentionally single-source: all agents install the same `skills/llm-wiki/SKILL.md`. Agent-specific differences live in setup code and in the skill's "Agent-specific MCP names" section.
+
+### Setup scripts read `.env`
+
+The setup scripts read the repository `.env` by default and then let already-exported shell variables override it. Pass `--env-file /path/to/file` to use another dotenv file.
+
+MCP URL resolution order:
+
+1. `--server-url URL`
+2. `LLM_WIKI_MCP_URL`
+3. `LLM_WIKI_MCP_SCHEME` + `LLM_WIKI_MCP_HOST` or `KB_HOST` + `KB_PORT` + `KB_MCP_PATH`
+
+If `KB_HOST=0.0.0.0`, setup converts it to `127.0.0.1` for local agent clients. The server may bind to all interfaces, but local agents should normally connect through loopback.
+
+MCP server name resolution order:
+
+1. `--server-name NAME`
+2. `LLM_WIKI_MCP_SERVER_NAME`
+3. Agent default: `llm_wiki` for Hermes/Codex, `llm-wiki` for Claude Code
+
+### Existing MCP configs are not overwritten
+
+Setup adds a server only when it is missing:
+
+- Claude Code: checks `claude mcp get <name>` and `claude mcp list` before running `claude mcp add`.
+- Hermes/Hermess: checks `hermes mcp list` for the same name or URL before running `hermes mcp add`.
+- Codex: parses `${CODEX_CONFIG_PATH:-~/.codex/config.toml}` and skips when the same server name or URL already exists.
+
+If a matching server exists, setup prints why it skipped and leaves the existing MCP config unchanged.
 
 ### Setup Hermes/Hermess
 
 ```bash
 scripts/setup-hermess.sh
+# or directly:
+uv run python scripts/setup_agents.py hermes
 ```
 
 What it does:
 
 - Copies `skills/llm-wiki/` to `${HERMES_HOME:-~/.hermes}/skills/llm-wiki/`
-- Runs `hermes mcp add llm_wiki --url http://127.0.0.1:9999/mcp`
-- Runs `hermes mcp test llm_wiki` when the CLI is available
-
-Manual equivalent:
-
-```yaml
-mcp_servers:
-  llm_wiki:
-    url: "http://127.0.0.1:9999/mcp"
-    timeout: 120
-    connect_timeout: 30
-```
+- Adds `${LLM_WIKI_MCP_SERVER_NAME:-llm_wiki}` to Hermes MCP config only when missing
+- Runs `hermes mcp test <server-name>` when the CLI is available
 
 After setup, restart Hermes or use `/reload-mcp` in an existing session if available.
 
@@ -145,27 +167,15 @@ After setup, restart Hermes or use `/reload-mcp` in an existing session if avail
 
 ```bash
 scripts/setup-claude.sh
+# or directly:
+uv run python scripts/setup_agents.py claude
 ```
 
 What it does:
 
 - Copies `skills/llm-wiki/` to `${CLAUDE_SKILLS_DIR:-~/.claude/skills}/llm-wiki/`
-- Runs `claude mcp add -s user --transport http llm-wiki http://127.0.0.1:9999/mcp`
-- Runs `claude mcp get llm-wiki` when the CLI is available
-
-Manual project-scoped `.mcp.json` equivalent:
-
-```json
-{
-  "mcpServers": {
-    "llm-wiki": {
-      "type": "http",
-      "url": "http://127.0.0.1:9999/mcp",
-      "timeout": 120000
-    }
-  }
-}
-```
+- Adds `${LLM_WIKI_MCP_SERVER_NAME:-llm-wiki}` with `claude mcp add -s ${CLAUDE_MCP_SCOPE:-user} --transport http ...` only when missing
+- Runs `claude mcp get <server-name>` when the CLI is available
 
 Claude may ask you to approve project-scoped `.mcp.json` servers the first time you open a project.
 
@@ -173,22 +183,14 @@ Claude may ask you to approve project-scoped `.mcp.json` servers the first time 
 
 ```bash
 scripts/setup-codex.sh
+# or directly:
+uv run python scripts/setup_agents.py codex
 ```
 
 What it does:
 
 - Copies `skills/llm-wiki/` to `${CODEX_SKILLS_DIR:-${CODEX_HOME:-~/.codex}/skills}/llm-wiki/`
-- Adds an idempotent `llm-wiki` block to `${CODEX_CONFIG_PATH:-~/.codex/config.toml}`
-
-Manual `~/.codex/config.toml` equivalent:
-
-```toml
-[mcp_servers.llm_wiki]
-url = "http://127.0.0.1:9999/mcp"
-startup_timeout_sec = 30
-tool_timeout_sec = 120
-default_tools_approval_mode = "prompt"
-```
+- Appends a new `[mcp_servers.<name>]` block to `${CODEX_CONFIG_PATH:-~/.codex/config.toml}` only when the same name or URL is absent
 
 Restart Codex after changing `config.toml` or skill files.
 
@@ -198,7 +200,8 @@ All setup scripts support:
 
 ```bash
 --dry-run                 # print actions without writing files or changing agent config
---server-url URL          # default: http://127.0.0.1:9999/mcp
+--env-file PATH           # default: repository .env
+--server-url URL          # override .env MCP URL resolution
 --server-name NAME        # default: llm_wiki for Hermes/Codex, llm-wiki for Claude
 ```
 

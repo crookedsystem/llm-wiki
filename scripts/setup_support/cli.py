@@ -1,0 +1,58 @@
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+from setup_support.config import DEFAULT_SERVER_NAMES, repo_root_from_script, resolve_config
+from setup_support.installers import install_agent
+
+
+def run(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    repo_root = repo_root_from_script(__file__)
+    config = resolve_config(
+        agent=args.agent,
+        repo_root=repo_root,
+        env_file=Path(args.env_file) if args.env_file else None,
+        server_name=args.server_name,
+        server_url=args.server_url,
+        dry_run=args.dry_run,
+        claude_scope=args.scope,
+        codex_config_path=args.config,
+    )
+    print(f"Using env file: {config.env_file}")
+    print(f"Resolved MCP server: {config.server_name} -> {config.server_url}")
+    return install_agent(config)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Install LLM Wiki MCP and skill configuration for Hermes/Hermess, "
+            "Claude Code, or Codex."
+        ),
+    )
+    parser.add_argument(
+        "agent", choices=sorted(DEFAULT_SERVER_NAMES), help="agent integration to configure"
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print actions without writing files or changing configs",
+    )
+    parser.add_argument("--env-file", help="dotenv file to read; defaults to the repository .env")
+    parser.add_argument(
+        "--server-url", help="override LLM_WIKI_MCP_URL / KB_HOST+KB_PORT+KB_MCP_PATH"
+    )
+    parser.add_argument("--server-name", help="override LLM_WIKI_MCP_SERVER_NAME")
+    parser.add_argument("--scope", help="Claude MCP scope; defaults to CLAUDE_MCP_SCOPE or user")
+    parser.add_argument(
+        "--config", help="Codex config path; defaults to CODEX_CONFIG_PATH or ~/.codex/config.toml"
+    )
+    return parser
+
+
+if __name__ == "__main__":
+    raise SystemExit(run(sys.argv[1:]))

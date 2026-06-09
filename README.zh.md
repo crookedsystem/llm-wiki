@@ -98,46 +98,68 @@ mcp_servers:
 
 ## 用于 LLM Wiki workflow 的 agent integration
 
-本 repository 包含可直接复制的 MCP snippet、一个 canonical agent skill，以及 setup script，用于让 Hermes/Hermess、Claude Code 和 Codex 将该服务器作为 Obsidian/Markdown LLM Wiki bridge 使用。
+本 repository 包含可直接复制的 MCP snippet、一个 canonical agent skill，以及基于 uv 的 setup script，用于让 Hermes/Hermess、Claude Code 和 Codex 将该服务器作为 Obsidian/Markdown LLM Wiki bridge 使用。
 
 预期 workflow 如下：
 
-1. 使用 `uv run llm-wiki` 运行 MCP 服务器。
-2. 将 agent 连接到 `http://127.0.0.1:9999/mcp`。
-3. 安装 canonical `llm-wiki` skill，让 agent 了解 wiki convention。
+1. 将 `.env.example` 复制为 `.env`，并为要运行的服务器设置 `KB_VAULT_PATH`、`KB_HOST`、`KB_PORT` 和 `KB_MCP_PATH`。
+2. 使用 `uv run llm-wiki` 运行 MCP 服务器。
+3. 为要连接的每个 agent 运行 setup script。
 4. 重启 agent session，使 MCP tool 和 skill 重新加载。
 
-### 为 agent integration 添加的文件
+### Agent integration 文件
 
-| Agent | MCP snippet | Skill source | Setup script |
-| --- | --- | --- | --- |
-| Hermes/Hermess | `mcp/hermess.yaml` | `skills/llm-wiki/` | `scripts/setup-hermess.sh` |
-| Claude Code | `mcp/claude.json` | `skills/llm-wiki/` | `scripts/setup-claude.sh` |
-| Codex | `mcp/codex.toml` | `skills/llm-wiki/` | `scripts/setup-codex.sh` |
+| Agent | MCP snippet | Skill source | Setup wrapper | Python entrypoint |
+| --- | --- | --- | --- | --- |
+| Hermes/Hermess | `mcp/hermess.yaml` | `skills/llm-wiki/` | `scripts/setup-hermess.sh` | `uv run python scripts/setup_agents.py hermes` |
+| Claude Code | `mcp/claude.json` | `skills/llm-wiki/` | `scripts/setup-claude.sh` | `uv run python scripts/setup_agents.py claude` |
+| Codex | `mcp/codex.toml` | `skills/llm-wiki/` | `scripts/setup-codex.sh` | `uv run python scripts/setup_agents.py codex` |
 
-该 skill 有意保持 single-source：所有 agent 都安装同一个 `skills/llm-wiki/SKILL.md`。Agent-specific 差异只存在于 setup script，以及 skill 的 “Agent-specific MCP names” 部分。
+Shell wrapper 只负责定位 repository，并通过 `uv` 调用共享的 Python 实现。可复用代码位于 `scripts/setup_support/`，因此 env 读取、MCP URL 解析、skill 复制、重复检查和 Codex TOML 编辑都走同一套代码。
+
+该 skill 有意保持 single-source：所有 agent 都安装同一个 `skills/llm-wiki/SKILL.md`。Agent-specific 差异只存在于 setup code，以及 skill 的 “Agent-specific MCP names” 部分。
+
+### Setup script 会读取 `.env`
+
+Setup script 默认读取 repository 的 `.env`，并允许已 export 的 shell 变量覆盖 `.env`。如果要使用其他 dotenv 文件，请传入 `--env-file /path/to/file`。
+
+MCP URL 解析顺序：
+
+1. `--server-url URL`
+2. `LLM_WIKI_MCP_URL`
+3. `LLM_WIKI_MCP_SCHEME` + `LLM_WIKI_MCP_HOST` 或 `KB_HOST` + `KB_PORT` + `KB_MCP_PATH`
+
+如果 `KB_HOST=0.0.0.0`，setup 会为本机 agent client 转换为 `127.0.0.1`。服务器可以绑定所有 interface，但同一机器上的 agent 通常应通过 loopback 连接。
+
+MCP server name 解析顺序：
+
+1. `--server-name NAME`
+2. `LLM_WIKI_MCP_SERVER_NAME`
+3. Agent 默认值：Hermes/Codex 为 `llm_wiki`，Claude Code 为 `llm-wiki`
+
+### 不覆盖已有 MCP config
+
+Setup 只在 server 缺失时添加：
+
+- Claude Code：先检查 `claude mcp get <name>` 和 `claude mcp list`，再运行 `claude mcp add`。
+- Hermes/Hermess：先在 `hermes mcp list` 中检查相同 name 或 URL，再运行 `hermes mcp add`。
+- Codex：解析 `${CODEX_CONFIG_PATH:-~/.codex/config.toml}`，如果相同 server name 或 URL 已存在则跳过。
+
+如果找到匹配 server，setup 会打印跳过原因，并保持已有 MCP config 不变。
 
 ### 设置 Hermes/Hermess
 
 ```bash
 scripts/setup-hermess.sh
+# 或直接运行：
+uv run python scripts/setup_agents.py hermes
 ```
 
 它会执行：
 
 - 将 `skills/llm-wiki/` 复制到 `${HERMES_HOME:-~/.hermes}/skills/llm-wiki/`
-- 运行 `hermes mcp add llm_wiki --url http://127.0.0.1:9999/mcp`
-- CLI 可用时运行 `hermes mcp test llm_wiki`
-
-手动 equivalent：
-
-```yaml
-mcp_servers:
-  llm_wiki:
-    url: "http://127.0.0.1:9999/mcp"
-    timeout: 120
-    connect_timeout: 30
-```
+- 仅当 `${LLM_WIKI_MCP_SERVER_NAME:-llm_wiki}` 缺失时添加到 Hermes MCP config
+- CLI 可用时运行 `hermes mcp test <server-name>`
 
 设置完成后，重启 Hermes；如果现有 session 支持，也可以使用 `/reload-mcp`。
 
@@ -145,27 +167,15 @@ mcp_servers:
 
 ```bash
 scripts/setup-claude.sh
+# 或直接运行：
+uv run python scripts/setup_agents.py claude
 ```
 
 它会执行：
 
 - 将 `skills/llm-wiki/` 复制到 `${CLAUDE_SKILLS_DIR:-~/.claude/skills}/llm-wiki/`
-- 运行 `claude mcp add -s user --transport http llm-wiki http://127.0.0.1:9999/mcp`
-- CLI 可用时运行 `claude mcp get llm-wiki`
-
-Project-scoped `.mcp.json` 手动 equivalent：
-
-```json
-{
-  "mcpServers": {
-    "llm-wiki": {
-      "type": "http",
-      "url": "http://127.0.0.1:9999/mcp",
-      "timeout": 120000
-    }
-  }
-}
-```
+- 仅当 `${LLM_WIKI_MCP_SERVER_NAME:-llm-wiki}` 缺失时，通过 `claude mcp add -s ${CLAUDE_MCP_SCOPE:-user} --transport http ...` 添加
+- CLI 可用时运行 `claude mcp get <server-name>`
 
 第一次在项目中看到 project-scoped `.mcp.json` server 时，Claude 可能会要求你批准。
 
@@ -173,22 +183,14 @@ Project-scoped `.mcp.json` 手动 equivalent：
 
 ```bash
 scripts/setup-codex.sh
+# 或直接运行：
+uv run python scripts/setup_agents.py codex
 ```
 
 它会执行：
 
 - 将 `skills/llm-wiki/` 复制到 `${CODEX_SKILLS_DIR:-${CODEX_HOME:-~/.codex}/skills}/llm-wiki/`
-- 向 `${CODEX_CONFIG_PATH:-~/.codex/config.toml}` 添加 idempotent `llm-wiki` block
-
-手动 `~/.codex/config.toml` equivalent：
-
-```toml
-[mcp_servers.llm_wiki]
-url = "http://127.0.0.1:9999/mcp"
-startup_timeout_sec = 30
-tool_timeout_sec = 120
-default_tools_approval_mode = "prompt"
-```
+- 仅当相同 name 或 URL 不存在时，向 `${CODEX_CONFIG_PATH:-~/.codex/config.toml}` 追加新的 `[mcp_servers.<name>]` block
 
 修改 `config.toml` 或 skill 文件后，请重启 Codex。
 
@@ -198,7 +200,8 @@ default_tools_approval_mode = "prompt"
 
 ```bash
 --dry-run                 # 只打印将执行的操作，不写文件或修改 agent config
---server-url URL          # 默认值: http://127.0.0.1:9999/mcp
+--env-file PATH           # 默认值: repository .env
+--server-url URL          # override .env MCP URL resolution
 --server-name NAME        # 默认值: Hermes/Codex 为 llm_wiki，Claude 为 llm-wiki
 ```
 
