@@ -11,15 +11,11 @@ from yaml.error import YAMLError
 from common.model import FrozenModel
 from vault.constant.schema import (
     DATE_PATTERN,
-    DEFAULT_ALLOWED_TYPES,
-    LEVEL_TWO_HEADING,
     META_NOTE_PATHS,
     REQUIRED_RAW_FIELDS,
     REQUIRED_SYNTH_FIELDS,
     SYNTHESIZED_DIRS,
     SYNTHESIZED_TYPE_BY_DIR,
-    TAG_PATTERN,
-    TAG_TAXONOMY_HEADING,
     WIKILINK_PATTERN,
 )
 from vault.entity.vault_note import compute_sha256, parse_note
@@ -42,6 +38,8 @@ from vault.service.result.wiki_context_result import (
     WikiPageDraft,
     WikiUpdateSuggestion,
 )
+from vault.service.vault_schema_parser import parse_schema_document
+from vault.service.vault_taxonomy_reconcile_service import VaultTaxonomyReconcileService
 
 
 class VaultSchemaService(FrozenModel):
@@ -125,6 +123,7 @@ class VaultSchemaService(FrozenModel):
             include_index_guidance=include_index,
             validation=validation,
         )
+        entities = [page for page in wiki_map.pages if page.page_type == "entity"]
         return WikiContext(
             schema=schema_text,
             index=index_text,
@@ -142,6 +141,7 @@ class VaultSchemaService(FrozenModel):
                 missing_frontmatter_count=validation.summary.missing_frontmatter,
             ),
             wiki_map=wiki_map,
+            entities=entities,
             issue_candidates=issue_candidates,
             update_suggestions=update_suggestions,
         )
@@ -152,67 +152,9 @@ class VaultSchemaService(FrozenModel):
         apply: bool = False,
         decisions: dict[str, object] | None = None,
     ) -> TaxonomyReconcileResult:
-        schema = self._parsed_schema()
-        tag_usage = self._tag_usage_counts()
-        decisions = decisions or {}
-        add_tags = sorted(
-            tag for tag in _string_list(decisions.get("add")) if TAG_PATTERN.match(tag)
-        )
-        rename_tags = {
-            old_tag: new_tag
-            for old_tag, new_tag in _string_mapping(decisions.get("rename")).items()
-            if TAG_PATTERN.match(new_tag)
-        }
-        remove_tags = set(_string_list(decisions.get("remove")))
-
-        allowed_after_add = set(schema.allowed_tags) | set(add_tags) | set(rename_tags.values())
-        unknown_tags = sorted(tag for tag in tag_usage if tag not in schema.allowed_tags)
-        planned_changes: list[str] = []
-        changed_files: list[str] = []
-
-        taxonomy_tags_to_add = sorted(
-            {tag for tag in [*add_tags, *rename_tags.values()] if tag not in schema.allowed_tags}
-        )
-        for tag in taxonomy_tags_to_add:
-            planned_changes.append(f"add taxonomy tag: {tag}")
-        for old_tag, new_tag in sorted(rename_tags.items()):
-            planned_changes.append(f"rename tag: {old_tag} -> {new_tag}")
-        for tag in sorted(remove_tags):
-            planned_changes.append(f"remove tag: {tag}")
-
-        if apply:
-            schema_path = self.note_repository.vault_root / "SCHEMA.md"
-            if taxonomy_tags_to_add:
-                schema_path.write_text(
-                    _schema_with_added_tags(
-                        schema_path.read_text(encoding="utf-8"), taxonomy_tags_to_add
-                    ),
-                    encoding="utf-8",
-                )
-                changed_files.append("SCHEMA.md")
-
-            for path in self.note_repository.markdown_notes():
-                relative_path = self.note_repository.relative_path(path)
-                if not _is_synthesized_path(relative_path):
-                    continue
-                content = path.read_text(encoding="utf-8")
-                rewritten = _rewrite_frontmatter_tags(content, rename_tags, remove_tags)
-                if rewritten != content:
-                    path.write_text(rewritten, encoding="utf-8")
-                    changed_files.append(relative_path)
-
-            schema = self._parsed_schema()
-            tag_usage = self._tag_usage_counts()
-            allowed_after_add = set(schema.allowed_tags)
-
-        unresolved_unknown_tags = sorted(tag for tag in tag_usage if tag not in allowed_after_add)
-        return TaxonomyReconcileResult(
-            dry_run=not apply,
-            unknown_tags=unknown_tags if not apply else unresolved_unknown_tags,
-            tag_usage_counts=tag_usage,
-            planned_changes=planned_changes,
-            changed_files=changed_files,
-        )
+        return VaultTaxonomyReconcileService(
+            note_repository=self.note_repository
+        ).reconcile_taxonomy(apply=apply, decisions=decisions)
 
     def _validate_write_issues(self, note_path: str, content: str) -> list[SchemaValidationIssue]:
         if note_path == "SCHEMA.md":
@@ -824,20 +766,6 @@ class VaultSchemaService(FrozenModel):
         )
 
 
-def parse_schema_document(content: str) -> ParsedWikiSchema:
-    tag_taxonomy = _extract_tag_taxonomy(content)
-    allowed_tags = sorted({tag for tags in tag_taxonomy.values() for tag in tags})
-    allowed_types = _extract_allowed_types(content) or list(DEFAULT_ALLOWED_TYPES)
-    return ParsedWikiSchema(
-        schema_parse_ok=bool(content and tag_taxonomy),
-        allowed_types=allowed_types,
-        required_synthesized_frontmatter=list(REQUIRED_SYNTH_FIELDS),
-        required_raw_frontmatter=list(REQUIRED_RAW_FIELDS),
-        tag_taxonomy=tag_taxonomy,
-        allowed_tags=allowed_tags,
-    )
-
-
 def _frontmatter_mapping(
     note_path: str,
     content: str,
@@ -905,75 +833,6 @@ def _validation_result(issues: list[SchemaValidationIssue]) -> VaultValidationRe
 
 def _count_code(issues: list[SchemaValidationIssue], code: str) -> int:
     return sum(1 for issue in issues if issue.code == code)
-
-
-def _extract_allowed_types(content: str) -> list[str]:
-    match = re.search(r"Allowed `type` values:\s*([^\n]+)", content)
-    if match is None:
-        return []
-    return [
-        token for token in _extract_tags_from_text(match.group(1)) if token in DEFAULT_ALLOWED_TYPES
-    ]
-
-
-def _extract_tag_taxonomy(content: str) -> dict[str, list[str]]:
-    lines = content.splitlines()
-    taxonomy_lines: list[str] = []
-    in_taxonomy = False
-    for line in lines:
-        if TAG_TAXONOMY_HEADING.match(line.strip()):
-            in_taxonomy = True
-            continue
-        if in_taxonomy and LEVEL_TWO_HEADING.match(line.strip()):
-            break
-        if in_taxonomy:
-            taxonomy_lines.append(line)
-
-    taxonomy: dict[str, list[str]] = {}
-    current_section = "General"
-    in_fence = False
-    for raw_line in taxonomy_lines:
-        stripped = raw_line.strip()
-        if stripped.startswith("```"):
-            in_fence = not in_fence
-            continue
-        if in_fence or not stripped or stripped.startswith("#"):
-            continue
-        if stripped.endswith(":") and not stripped.startswith("-"):
-            current_section = stripped[:-1].strip() or current_section
-            taxonomy.setdefault(current_section, [])
-            continue
-        if not stripped.startswith("-"):
-            continue
-
-        item = stripped[1:].strip()
-        if not item or item.startswith("["):
-            continue
-        values = item
-        if ":" in item:
-            raw_section, values = item.split(":", 1)
-            current_section = raw_section.strip().strip("`") or current_section
-        tags = _extract_tags_from_text(values)
-        if not tags:
-            continue
-        section_tags = taxonomy.setdefault(current_section, [])
-        for tag in tags:
-            if tag not in section_tags:
-                section_tags.append(tag)
-
-    return {section: sorted(tags) for section, tags in taxonomy.items() if tags}
-
-
-def _extract_tags_from_text(text: str) -> list[str]:
-    code_tags = [tag for tag in re.findall(r"`([^`]+)`", text) if TAG_PATTERN.match(tag)]
-    if code_tags:
-        return code_tags
-
-    candidates = [part.strip().strip("`.;") for part in text.split(",")]
-    if len(candidates) == 1:
-        single = candidates[0]
-        return [single] if TAG_PATTERN.match(single) else []
-    return [candidate for candidate in candidates if TAG_PATTERN.match(candidate)]
 
 
 def _allowed_types_for_path(note_path: str) -> set[str]:
@@ -1182,67 +1041,3 @@ def _deduplicate_update_suggestions(
         seen.add(key)
         deduplicated.append(suggestion)
     return deduplicated
-
-
-def _string_list(value: object) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    return [item for item in value if isinstance(item, str)]
-
-
-def _string_mapping(value: object) -> dict[str, str]:
-    if not isinstance(value, dict):
-        return {}
-    result: dict[str, str] = {}
-    for key, mapped_value in value.items():
-        if isinstance(key, str) and isinstance(mapped_value, str):
-            result[key] = mapped_value
-    return result
-
-
-def _schema_with_added_tags(content: str, tags: list[str]) -> str:
-    tags_to_add = [tag for tag in tags if TAG_PATTERN.match(tag)]
-    if not tags_to_add:
-        return content
-    addition = f"- Added: {', '.join(tags_to_add)}"
-    lines = content.splitlines()
-    for index, line in enumerate(lines):
-        if TAG_TAXONOMY_HEADING.match(line.strip()):
-            insert_at = index + 1
-            while insert_at < len(lines) and not lines[insert_at].strip():
-                insert_at += 1
-            lines.insert(insert_at, addition)
-            return "\n".join(lines) + "\n"
-    return f"{content.rstrip()}\n\n## Tag taxonomy\n{addition}\n"
-
-
-def _rewrite_frontmatter_tags(
-    content: str,
-    rename_tags: dict[str, str],
-    remove_tags: set[str],
-) -> str:
-    if not rename_tags and not remove_tags:
-        return content
-    frontmatter, body, issues = _frontmatter_mapping("<rewrite>", content)
-    if frontmatter is None or issues:
-        return content
-    tags = _frontmatter_list(frontmatter.get("tags"))
-    if tags is None:
-        return content
-    rewritten_tags: list[str] = []
-    for tag in tags:
-        rewritten = rename_tags.get(tag, tag)
-        if rewritten in remove_tags:
-            continue
-        if rewritten not in rewritten_tags:
-            rewritten_tags.append(rewritten)
-    if rewritten_tags == tags:
-        return content
-    frontmatter["tags"] = rewritten_tags
-    dumped_frontmatter = yaml.safe_dump(
-        frontmatter,
-        allow_unicode=True,
-        default_flow_style=False,
-        sort_keys=False,
-    )
-    return f"---\n{dumped_frontmatter}---\n{body}"

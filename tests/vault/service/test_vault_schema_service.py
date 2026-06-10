@@ -611,6 +611,9 @@ def test_wiki_context_surfaces_map_link_issues_and_update_suggestions(
     pages = {page.path: page for page in context.wiki_map.pages}
     assert pages["concepts/agent-memory.md"].outbound_links == ["entities/hermes-agent.md"]
     assert pages["entities/hermes-agent.md"].inbound_links == ["concepts/agent-memory.md"]
+    assert [entity.path for entity in context.entities] == ["entities/hermes-agent.md"]
+    assert context.entities[0].title == "Hermes Agent"
+    assert context.entities[0].inbound_links == ["concepts/agent-memory.md"]
     issue_codes = {issue.code for issue in context.issue_candidates}
     assert {
         "broken_wikilink",

@@ -21,7 +21,7 @@ The underlying server exposes these tool names:
 
 - `kb_write_note(note_path, content, if_hash?)` — write a complete note inside the configured vault. It enforces the vault schema before writing. Existing notes require optimistic concurrency.
 - `kb_search_notes(query, limit?, path_prefix?)` — search the Markdown LLM Wiki vault and return ranked paths, titles, page types, tags, content hashes, and line snippets.
-- `kb_wiki_context(recent_log_lines?, include_schema_rules?, include_index?)` — return the schema-first context bundle: `SCHEMA.md`, `index.md`, recent `log.md`, parsed rules, current page/link map, issue candidates, and update suggestions.
+- `kb_wiki_context(recent_log_lines?, include_schema_rules?, include_index?)` — return the schema-first context bundle: `SCHEMA.md`, `index.md`, recent `log.md`, parsed rules, current page/link map, explicit entity list, issue candidates, and update suggestions.
 - `kb_validate_vault(include_raw?)` — validate deterministic schema hygiene across the vault: frontmatter, required fields, path/type consistency, tag taxonomy, raw metadata, and raw body hashes.
 - `kb_reconcile_taxonomy(apply?, decisions?)` — dry-run or apply deterministic tag taxonomy repair. Use it for tag add/rename/remove decisions, not for content migration.
 
@@ -53,9 +53,9 @@ queries/         # valuable answered questions worth preserving
 ## First actions in a session
 
 1. Confirm the MCP server is connected by listing tools or calling `kb_wiki_context`.
-2. Start every wiki task with `kb_wiki_context` when it is available. Treat the returned `parsed_schema` as the write contract, not as background documentation, and treat `wiki_map`, `issue_candidates`, and `update_suggestions` as the first-pass graph maintenance backlog.
+2. Start every wiki task with `kb_wiki_context` when it is available. Treat the returned `parsed_schema` as the write contract, not as background documentation, and treat `entities`, `wiki_map`, `issue_candidates`, and `update_suggestions` as the first-pass graph maintenance backlog.
 3. Use `parsed_schema.required_synthesized_frontmatter`, `parsed_schema.allowed_types`, and `parsed_schema.tag_taxonomy` before creating or updating pages. Do not invent page types or tags.
-4. Use `wiki_map.pages`, `wiki_map.pages_by_type`, and `wiki_map.link_graph` to choose whether to update an existing entity/concept, add links, or create a new page.
+4. Use `entities`, `wiki_map.pages`, `wiki_map.pages_by_type`, and `wiki_map.link_graph` to choose whether to update an existing entity/concept, add links, or create a new page.
 5. Review `issue_candidates` before writing. Prefer fixing broken wikilinks, missing backlinks, orphan/underlinked pages, unindexed pages, and raw sources without synthesis when they are relevant to the user's task.
 6. Use `update_suggestions` as suggested actions, not blind commands. Apply only suggestions that improve durable wiki structure.
 7. Check `index` and recent `log` from `kb_wiki_context` before creating a page. Update existing pages instead of duplicating them, and avoid repeating recent work.
@@ -291,8 +291,8 @@ Raw files are source archives. Do not edit a raw body after creation. If the sou
 
 Use the new context tools to strengthen the graph while writing, not as a separate cleanup chore:
 
-1. **Orient:** `kb_wiki_context` returns `parsed_schema`, `wiki_map`, `issue_candidates`, and `update_suggestions`. Treat this as the current wiki graph.
-2. **Resolve identity:** Use `wiki_map.pages_by_type.entity`, entity titles, slugs, sources, inbound/outbound links, and `kb_search_notes` hits to decide whether the subject already has a canonical page.
+1. **Orient:** `kb_wiki_context` returns `parsed_schema`, `entities`, `wiki_map`, `issue_candidates`, and `update_suggestions`. Treat this as the current wiki graph.
+2. **Resolve identity:** Use top-level `entities`, `wiki_map.pages_by_type.entity`, entity titles, slugs, sources, inbound/outbound links, and `kb_search_notes` hits to decide whether the subject already has a canonical page.
 3. **Plan the write set:** Include every page whose meaning or navigation changes: the main note, reciprocal backlink targets, duplicate/alias pages to merge or disambiguate, `index.md`, `log.md`, and `SCHEMA.md` when taxonomy changes.
 4. **Apply only semantic repairs:** `update_suggestions` are candidate repairs. Apply suggestions when the relationship is meaningful; skip noisy backlinks that would not help future retrieval.
 5. **Verify:** Re-run `kb_wiki_context` after writing and make sure relevant `broken_wikilink`, `ambiguous_wikilink`, `missing_backlink`, `orphan_page`, `underlinked_page`, `unindexed_page`, `missing_raw_source`, and `duplicate_title` candidates were resolved or intentionally left with a log note.
@@ -310,6 +310,49 @@ Entity pages are canonical profiles, not one-source summaries. When a write ment
 7. Keep provenance current: add new raw paths to `sources:` and `## Sources`; remove a source only if the page no longer relies on it.
 8. If duplicate entity pages exist, merge or disambiguate them before adding more content. Do not spread one entity across multiple pages.
 9. Always bump `updated`, refresh the `index.md` one-line summary if the entity's meaning changed, and append `log.md` with created/updated paths.
+
+## Adding an entity page
+
+Use this flow when the source material introduces a real-world person, organization, product, model, project, protocol, dataset, standard, or API that should become a canonical profile:
+
+1. Read `entities` from `kb_wiki_context` before searching broadly. Treat it as the current canonical entity list, including path, title, tags, sources, links, and index status.
+2. Compare the candidate against `entities`, `wiki_map.pages_by_type.entity`, `index`, duplicate-title candidates, and `kb_search_notes` results. Resolve aliases, renamed products, abbreviations, and source overlap before deciding it is new.
+3. Create `entities/<stable-slug>.md` only after identity resolution shows no canonical page exists and the entity meets the page threshold.
+4. Use `type: entity`, tags from `parsed_schema.allowed_tags`, and at least one reliable source in `sources:`. If the source is raw material that is not in `raw/` yet, add the raw note first or cite the external source explicitly.
+5. Include `## Summary`, `## Key facts`, `## Relationships`, `## Open questions`, and `## Sources`. Link the entity to relevant concepts, comparisons, queries, or other entities with `[[wikilinks]]`.
+6. Update `index.md` under `## Entities` with one line for the new canonical page, append a `log.md` create/update entry, then rerun `kb_wiki_context` and repair relevant graph issues.
+
+Minimal entity page:
+
+```markdown
+---
+title: Example Entity
+created: YYYY-MM-DD
+updated: YYYY-MM-DD
+type: entity
+tags: [tag-from-schema]
+sources: [raw/articles/source-file.md]
+confidence: medium
+contested: false
+---
+
+# Example Entity
+
+## Summary
+One short paragraph explaining why this entity matters in the vault.
+
+## Key facts
+- Dated, source-backed fact.
+
+## Relationships
+- [[concepts/related-concept]] — why the relationship matters.
+
+## Open questions
+- What remains uncertain?
+
+## Sources
+- raw/articles/source-file.md
+```
 
 ## Broken-link self-repair policy
 
@@ -332,7 +375,7 @@ When LLM Wiki MCP tools are available, start every wiki task with `kb_wiki_conte
 1. Read `parsed_schema.required_synthesized_frontmatter` before creating or updating synthesized pages.
 2. Choose `type` from `parsed_schema.allowed_types`; do not invent page types.
 3. Choose tags only from `parsed_schema.tag_taxonomy` / `parsed_schema.allowed_tags`.
-4. Read `wiki_map.pages_by_type` and `wiki_map.link_graph` as the current entity/concept map. Use it to decide whether the task should update an existing page, create a new page, or only add links.
+4. Read top-level `entities`, `wiki_map.pages_by_type`, and `wiki_map.link_graph` as the current entity/concept map. Use it to decide whether the task should update an existing page, create a new page, or only add links.
 5. Inspect `issue_candidates` for relevant graph/consistency problems:
    - `broken_wikilink` / `ambiguous_wikilink` — repair link target spelling or create/disambiguate pages.
    - `missing_backlink` — add bidirectional navigation when the relationship is meaningful.

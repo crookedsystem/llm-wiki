@@ -70,5 +70,6 @@ class WikiContext(FrozenModel):
     summary: WikiContextSummary
     health: WikiContextHealth
     wiki_map: WikiContextMap = Field(default_factory=WikiContextMap)
+    entities: list[WikiPageContext] = Field(default_factory=list)
     issue_candidates: list[WikiContextIssueCandidate] = Field(default_factory=list)
     update_suggestions: list[WikiUpdateSuggestion] = Field(default_factory=list)

@@ -94,6 +94,27 @@ contested: false
 """,
             },
         )
+        await server.call_tool(
+            "kb_write_note",
+            {
+                "note_path": "entities/hermes-agent.md",
+                "content": """---
+title: Hermes Agent
+created: 2026-06-10
+updated: 2026-06-10
+type: entity
+tags: [agent-memory]
+sources: [raw/hermes/source.md]
+confidence: medium
+contested: false
+---
+
+# Hermes Agent
+
+Related to [[concepts/agent-memory]].
+""",
+            },
+        )
         structured_write_result = cast(WriteNoteToolResult, write_result)
         _, search_result = await server.call_tool(
             "kb_search_notes",
@@ -128,7 +149,13 @@ contested: false
         assert "schema" in structured_context
         assert cast(dict[str, Any], structured_context["health"])["schema_parse_ok"] is True
         context_map = cast(dict[str, Any], structured_context["wiki_map"])
-        assert context_map["pages_by_type"] == {"concept": ["concepts/agent-memory.md"]}
+        assert context_map["pages_by_type"] == {
+            "concept": ["concepts/agent-memory.md"],
+            "entity": ["entities/hermes-agent.md"],
+        }
+        entities = cast(list[dict[str, Any]], structured_context["entities"])
+        assert [entity["path"] for entity in entities] == ["entities/hermes-agent.md"]
+        assert entities[0]["title"] == "Hermes Agent"
         assert "issue_candidates" in structured_context
         assert "update_suggestions" in structured_context
         assert cast(dict[str, Any], structured_validation["summary"])["issue_count"] == 0
