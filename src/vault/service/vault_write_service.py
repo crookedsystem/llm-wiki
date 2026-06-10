@@ -58,8 +58,8 @@ class VaultWriteService(FrozenModel):
             raise
 
     async def _write_note(self, command: WriteNoteCommand) -> WriteNoteResult:
-        note_path = str(command.note_path)
         resolved_path = self.paths.resolve_note_path(command.note_path)
+        note_path = resolved_path.relative_to(self.paths.root.resolve()).as_posix()
         self._check_if_hash(resolved_path, command.if_hash)
         if self.schema_service is not None:
             self.schema_service.ensure_valid_write(note_path, command.content)
