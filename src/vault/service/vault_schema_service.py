@@ -18,7 +18,7 @@ from vault.constant.schema import (
     SYNTHESIZED_TYPE_BY_DIR,
     WIKILINK_PATTERN,
 )
-from vault.entity.vault_note import compute_sha256, parse_note
+from vault.entity.vault_note import PROVENANCE_PREFIX, compute_sha256, parse_note
 from vault.error.schema_validation_error import SchemaValidationError
 from vault.infrastructure.repository.vault_note_repository import VaultNoteRepository
 from vault.service.result.parsed_wiki_schema import ParsedWikiSchema
@@ -109,7 +109,6 @@ class VaultSchemaService(FrozenModel):
         include_schema_rules: bool = True,
         include_index: bool = True,
     ) -> WikiContext:
-        _ = include_schema_rules
         schema_text = self._read_optional_note("SCHEMA.md")
         index_text = self._read_optional_note("index.md") if include_index else ""
         log_text = self._read_optional_note("log.md")
@@ -125,10 +124,10 @@ class VaultSchemaService(FrozenModel):
         )
         entities = [page for page in wiki_map.pages if page.page_type == "entity"]
         return WikiContext(
-            schema=schema_text,
+            schema=schema_text if include_schema_rules else "",
             index=index_text,
             recent_log=recent_log,
-            parsed_schema=parsed_schema,
+            parsed_schema=parsed_schema if include_schema_rules else _empty_parsed_wiki_schema(),
             summary=WikiContextSummary(
                 total_notes=len(relative_paths),
                 synthesized_pages=sum(1 for path in relative_paths if _is_synthesized_path(path)),
@@ -343,7 +342,7 @@ class VaultSchemaService(FrozenModel):
                     message="sources must be a YAML list",
                 )
             )
-        elif sources == []:
+        elif sources is not None and not _nonblank_strings(sources):
             issues.append(
                 SchemaValidationIssue(
                     code="empty_sources",
@@ -506,22 +505,28 @@ class VaultSchemaService(FrozenModel):
     ) -> tuple[WikiContextMap, list[WikiContextIssueCandidate], list[WikiUpdateSuggestion]]:
         page_drafts: dict[str, WikiPageDraft] = {}
         raw_sources: list[str] = []
+        raw_source_urls_by_path: dict[str, set[str]] = {}
         for path in self.note_repository.markdown_notes():
             relative_path = self.note_repository.relative_path(path)
+            content = path.read_text(encoding="utf-8")
             if _is_raw_path(relative_path):
                 raw_sources.append(relative_path)
+                raw_frontmatter, _raw_body, _raw_issues = _frontmatter_mapping(
+                    relative_path,
+                    content,
+                )
+                raw_source_urls_by_path[relative_path] = _raw_source_urls(raw_frontmatter)
                 continue
             if not _is_synthesized_path(relative_path):
                 continue
 
-            content = path.read_text(encoding="utf-8")
             frontmatter, body, _issues = _frontmatter_mapping(relative_path, content)
             page_drafts[relative_path] = WikiPageDraft(
                 path=relative_path,
                 title=_context_page_title(relative_path, frontmatter, body),
                 page_type=_scalar_string(frontmatter.get("type")) if frontmatter else None,
                 tags=(_frontmatter_list(frontmatter.get("tags")) or []) if frontmatter else [],
-                sources=(_frontmatter_list(frontmatter.get("sources")) or [])
+                sources=_nonblank_strings(_frontmatter_list(frontmatter.get("sources")) or [])
                 if frontmatter
                 else [],
                 body=body,
@@ -586,6 +591,7 @@ class VaultSchemaService(FrozenModel):
         inbound_links = {path: sorted(sources) for path, sources in sorted(inbound_links.items())}
 
         raw_source_set = set(raw_sources)
+        raw_paths_by_source_url = _raw_paths_by_source_url(raw_source_urls_by_path)
         referenced_raw_sources: set[str] = set()
         pages_by_type: dict[str, list[str]] = {}
         for page_path in page_paths:
@@ -593,6 +599,7 @@ class VaultSchemaService(FrozenModel):
             pages_by_type.setdefault(draft.page_type or "unknown", []).append(page_path)
             for source in draft.sources:
                 if not source.startswith("raw/"):
+                    referenced_raw_sources.update(raw_paths_by_source_url.get(source, set()))
                     continue
                 if source in raw_source_set:
                     referenced_raw_sources.add(source)
@@ -619,7 +626,7 @@ class VaultSchemaService(FrozenModel):
         pages: list[WikiPageContext] = []
         for page_path in page_paths:
             draft = page_drafts[page_path]
-            indexed = _index_mentions_page(index_text, page_path)
+            indexed = _index_mentions_page(index_text, page_path, page_drafts)
             pages.append(
                 WikiPageContext(
                     path=page_path,
@@ -887,8 +894,16 @@ def _frontmatter_list(value: object) -> list[str] | None:
     return result
 
 
+def _nonblank_strings(values: list[str]) -> list[str]:
+    return [value for value in values if value.strip()]
+
+
 def _tail_nonempty_lines(content: str, line_count: int) -> str:
-    lines = [line for line in content.splitlines() if line.strip()]
+    lines = [
+        line
+        for line in content.splitlines()
+        if line.strip() and not line.strip().startswith(PROVENANCE_PREFIX)
+    ]
     if line_count <= 0:
         return ""
     return "\n".join(lines[-line_count:])
@@ -940,24 +955,61 @@ def _resolve_wikilink_target(
     return sorted(candidates)
 
 
-def _index_mentions_page(index_text: str, page_path: str) -> bool:
+def _index_mentions_page(
+    index_text: str,
+    page_path: str,
+    page_drafts: dict[str, WikiPageDraft],
+) -> bool:
     page_without_suffix = page_path[:-3] if page_path.endswith(".md") else page_path
-    stem = Path(page_path).stem
-    normalized_wikilink_targets = {
-        target[:-3] if target.endswith(".md") else target
-        for target in _extract_wikilink_targets(index_text)
-    }
-    return (
-        _contains_plain_index_path(index_text, page_path)
-        or _contains_plain_index_path(index_text, page_without_suffix)
-        or page_without_suffix in normalized_wikilink_targets
-        or stem in normalized_wikilink_targets
-    )
+    if _contains_plain_index_path(index_text, page_path) or _contains_plain_index_path(
+        index_text,
+        page_without_suffix,
+    ):
+        return True
+
+    for target in _extract_wikilink_targets(index_text):
+        resolved_targets = _resolve_wikilink_target(target, page_drafts)
+        if resolved_targets == [page_path]:
+            return True
+    return False
 
 
 def _contains_plain_index_path(index_text: str, page_path: str) -> bool:
     escaped_path = re.escape(page_path)
     return re.search(rf"(?<![\w/.-]){escaped_path}(?![\w/.-])", index_text) is not None
+
+
+def _raw_source_urls(frontmatter: dict[str, Any] | None) -> set[str]:
+    if frontmatter is None:
+        return set()
+    urls: set[str] = set()
+    source_url = _scalar_string(frontmatter.get("source_url"))
+    if source_url is not None and source_url.strip():
+        urls.add(source_url)
+    source_urls = _frontmatter_list(frontmatter.get("source_urls")) or []
+    urls.update(_nonblank_strings(source_urls))
+    return urls
+
+
+def _raw_paths_by_source_url(
+    raw_source_urls_by_path: dict[str, set[str]],
+) -> dict[str, set[str]]:
+    raw_paths_by_url: dict[str, set[str]] = {}
+    for raw_path, source_urls in raw_source_urls_by_path.items():
+        for source_url in source_urls:
+            raw_paths_by_url.setdefault(source_url, set()).add(raw_path)
+    return raw_paths_by_url
+
+
+def _empty_parsed_wiki_schema() -> ParsedWikiSchema:
+    return ParsedWikiSchema(
+        schema_parse_ok=False,
+        allowed_types=[],
+        required_synthesized_frontmatter=[],
+        required_raw_frontmatter=[],
+        tag_taxonomy={},
+        allowed_tags=[],
+    )
 
 
 def _related_page_candidates(

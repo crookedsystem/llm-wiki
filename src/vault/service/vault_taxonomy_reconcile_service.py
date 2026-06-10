@@ -132,7 +132,13 @@ class VaultTaxonomyReconcileService(FrozenModel):
         taxonomy_tags_to_add = sorted(
             {
                 tag
-                for tag in [*taxonomy_decisions.add_tags, *taxonomy_decisions.rename_tags.values()]
+                for tag in [
+                    *taxonomy_decisions.add_tags,
+                    *self._rename_targets_for_used_tags(
+                        current_taxonomy,
+                        taxonomy_decisions,
+                    ),
+                ]
                 if tag not in current_taxonomy.parsed_schema.allowed_tags
             }
         )
@@ -146,6 +152,18 @@ class VaultTaxonomyReconcileService(FrozenModel):
             rename_tags=taxonomy_decisions.rename_tags,
             remove_tags=taxonomy_decisions.remove_tags,
         )
+
+    def _rename_targets_for_used_tags(
+        self,
+        current_taxonomy: TaxonomyUsageSnapshot,
+        taxonomy_decisions: TaxonomyReconcileDecisions,
+    ) -> list[str]:
+        """실제로 사용 중인 tag의 rename 대상만 schema 추가 후보로 반환합니다."""
+        return [
+            new_tag
+            for old_tag, new_tag in taxonomy_decisions.rename_tags.items()
+            if old_tag in current_taxonomy.tag_usage_counts
+        ]
 
     def _describe_taxonomy_reconcile_changes(
         self,
@@ -196,6 +214,8 @@ class VaultTaxonomyReconcileService(FrozenModel):
         if not taxonomy_tags_to_add:
             return False
         schema_path = self.note_repository.vault_root / "SCHEMA.md"
+        if not schema_path.exists():
+            return False
         content = schema_path.read_text(encoding="utf-8")
         rewritten = _schema_content_with_added_taxonomy_tags(content, taxonomy_tags_to_add)
         if rewritten == content:

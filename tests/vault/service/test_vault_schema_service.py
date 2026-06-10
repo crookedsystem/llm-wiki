@@ -97,6 +97,34 @@ contested: false
     assert unknown_tag.issues[0].value == "unknown-tag"
 
 
+def test_validate_write_rejects_blank_synthesized_sources(tmp_path: Path) -> None:
+    # Given: schema가 준비된 LLM Wiki vault가 있다.
+    vault_root = tmp_path / "vault"
+    _write_schema(vault_root)
+    schema_service = VaultSchemaService(note_repository=VaultNoteRepository(root=vault_root))
+
+    # When: sources가 list 형식이지만 실제 source 값은 비어 있다.
+    result = schema_service.validate_write(
+        "concepts/agent-memory.md",
+        """---
+title: Agent Memory
+created: 2026-06-10
+updated: 2026-06-10
+type: concept
+tags: [agent-memory]
+sources: ["   "]
+confidence: medium
+contested: false
+---
+
+# Agent Memory
+""",
+    )
+
+    # Then: 빈 list와 동일하게 사용할 수 없는 source로 검증 실패한다.
+    assert [issue.code for issue in result.issues] == ["empty_sources"]
+
+
 def test_validate_write_rejects_synthesized_page_when_schema_is_missing(
     tmp_path: Path,
 ) -> None:
@@ -232,9 +260,7 @@ contested: false
     assert [(issue.code, issue.field) for issue in non_scalar.issues] == [
         ("invalid_field_type", "title")
     ]
-    assert [(issue.code, issue.field) for issue in blank.issues] == [
-        ("invalid_title", "title")
-    ]
+    assert [(issue.code, issue.field) for issue in blank.issues] == [("invalid_title", "title")]
 
 
 def test_validate_write_rejects_non_string_synthesized_confidence(
@@ -495,6 +521,46 @@ def test_wiki_context_returns_schema_index_recent_log_and_health(tmp_path: Path)
     assert context.health.unknown_tag_count == 0
 
 
+def test_wiki_context_can_omit_schema_rules_from_payload(tmp_path: Path) -> None:
+    # Given: SCHEMA.md가 있는 vault가 있다.
+    vault_root = tmp_path / "vault"
+    _write_schema(vault_root)
+
+    # When: schema/rules payload를 제외해 context 크기를 줄인다.
+    context = VaultSchemaService(note_repository=VaultNoteRepository(root=vault_root)).wiki_context(
+        include_schema_rules=False
+    )
+
+    # Then: health 계산은 실제 schema 기준이지만 응답 payload의 schema/rule 필드는 비운다.
+    assert context.schema_text == ""
+    assert context.parsed_schema.schema_parse_ok is False
+    assert context.parsed_schema.allowed_tags == []
+    assert context.health.schema_parse_ok is True
+
+
+def test_wiki_context_recent_log_skips_provenance_trailer(tmp_path: Path) -> None:
+    # Given: log.md 끝에 write provenance trailer가 붙어 있다.
+    vault_root = tmp_path / "vault"
+    _write_schema(vault_root)
+    (vault_root / "log.md").write_text(
+        (
+            "# Wiki Log\n\n"
+            "## [2026-06-08] create | old\n"
+            "## [2026-06-10] lint | recent\n"
+            "<!-- kb-provenance: source_hash=abc; operation=write_note; actor=test -->\n"
+        ),
+        encoding="utf-8",
+    )
+
+    # When: 최근 log 1줄만 요청한다.
+    context = VaultSchemaService(note_repository=VaultNoteRepository(root=vault_root)).wiki_context(
+        recent_log_lines=1
+    )
+
+    # Then: provenance comment가 아니라 실제 최신 durable log entry를 반환한다.
+    assert context.recent_log == "## [2026-06-10] lint | recent"
+
+
 def test_wiki_context_omits_unindexed_guidance_when_index_is_excluded(
     tmp_path: Path,
 ) -> None:
@@ -512,15 +578,13 @@ def test_wiki_context_omits_unindexed_guidance_when_index_is_excluded(
     )
 
     # When: context payload 절감을 위해 index를 제외한다.
-    context = VaultSchemaService(
-        note_repository=VaultNoteRepository(root=vault_root)
-    ).wiki_context(include_index=False)
+    context = VaultSchemaService(note_repository=VaultNoteRepository(root=vault_root)).wiki_context(
+        include_index=False
+    )
 
     # Then: 빈 index 문자열 때문에 unindexed backlog를 만들지 않는다.
     assert "unindexed_page" not in {issue.code for issue in context.issue_candidates}
-    assert "add_index_entry" not in {
-        suggestion.action for suggestion in context.update_suggestions
-    }
+    assert "add_index_entry" not in {suggestion.action for suggestion in context.update_suggestions}
 
 
 def test_wiki_context_requires_real_index_link_or_path_match(tmp_path: Path) -> None:
@@ -554,6 +618,71 @@ def test_wiki_context_requires_real_index_link_or_path_match(tmp_path: Path) -> 
     page = next(page for page in context.wiki_map.pages if page.path == "concepts/ai.md")
     assert page.indexed is False
     assert "unindexed_page" in {issue.code for issue in context.issue_candidates}
+
+
+def test_wiki_context_treats_title_wikilink_in_index_as_indexed(tmp_path: Path) -> None:
+    # Given: index.md가 file path 대신 Obsidian title wikilink로 page를 나열한다.
+    vault_root = tmp_path / "vault"
+    _write_schema(vault_root)
+    (vault_root / "index.md").write_text(
+        "# Wiki Index\n\n## Concepts\n- [[Agent Memory]]\n",
+        encoding="utf-8",
+    )
+    _write_raw_note(vault_root / "raw" / "articles" / "source.md", "Source body\n")
+    _write_synthesized_note(
+        vault_root / "concepts" / "agent-memory.md",
+        title="Agent Memory",
+        page_type="concept",
+        tags=["agent-memory"],
+        sources=["raw/articles/source.md"],
+        body="# Agent Memory\n\nTitle link in index.\n",
+    )
+
+    # When: wiki context를 만든다.
+    context = VaultSchemaService(
+        note_repository=VaultNoteRepository(root=vault_root)
+    ).wiki_context()
+
+    # Then: title wikilink가 단일 page로 해석되면 indexed로 본다.
+    page = next(page for page in context.wiki_map.pages if page.path == "concepts/agent-memory.md")
+    assert page.indexed is True
+    assert "unindexed_page" not in {issue.code for issue in context.issue_candidates}
+
+
+def test_wiki_context_does_not_index_ambiguous_title_wikilink(
+    tmp_path: Path,
+) -> None:
+    # Given: 같은 title을 가진 page가 둘 있고 index.md는 title만 링크한다.
+    vault_root = tmp_path / "vault"
+    _write_schema(vault_root)
+    (vault_root / "index.md").write_text("- [[Agent Memory]]\n", encoding="utf-8")
+    _write_raw_note(vault_root / "raw" / "articles" / "source.md", "Source body\n")
+    _write_synthesized_note(
+        vault_root / "concepts" / "agent-memory.md",
+        title="Agent Memory",
+        page_type="concept",
+        tags=["agent-memory"],
+        sources=["raw/articles/source.md"],
+        body="# Agent Memory\n",
+    )
+    _write_synthesized_note(
+        vault_root / "concepts" / "agent-memory-alt.md",
+        title="Agent Memory",
+        page_type="concept",
+        tags=["agent-memory"],
+        sources=["raw/articles/source.md"],
+        body="# Agent Memory\n",
+    )
+
+    # When: wiki context를 만든다.
+    context = VaultSchemaService(
+        note_repository=VaultNoteRepository(root=vault_root)
+    ).wiki_context()
+
+    # Then: title이 여러 page에 매칭되면 특정 page가 indexed라고 단정하지 않는다.
+    pages = {page.path: page for page in context.wiki_map.pages}
+    assert pages["concepts/agent-memory.md"].indexed is False
+    assert pages["concepts/agent-memory-alt.md"].indexed is False
 
 
 def test_wiki_context_surfaces_map_link_issues_and_update_suggestions(
@@ -663,10 +792,45 @@ def test_wiki_context_resolves_wikilinks_by_page_title(tmp_path: Path) -> None:
 
     # Then: title-based Obsidian link를 broken link로 보고하지 않는다.
     pages = {page.path: page for page in context.wiki_map.pages}
-    assert pages["concepts/working-memory.md"].outbound_links == [
-        "concepts/agent-memory.md"
-    ]
+    assert pages["concepts/working-memory.md"].outbound_links == ["concepts/agent-memory.md"]
     assert "broken_wikilink" not in {issue.code for issue in context.issue_candidates}
+
+
+def test_wiki_context_counts_raw_source_url_as_referenced(tmp_path: Path) -> None:
+    # Given: synthesized page가 raw path 대신 source URL을 sources에 사용한다.
+    vault_root = tmp_path / "vault"
+    _write_schema(vault_root)
+    raw_body = "Source body\n"
+    raw_path = vault_root / "raw" / "articles" / "source.md"
+    raw_path.parent.mkdir(parents=True, exist_ok=True)
+    raw_path.write_text(
+        f"""---
+source_url: https://example.com/source
+ingested: 2026-06-10
+sha256: {compute_sha256(raw_body)}
+---
+{raw_body}""",
+        encoding="utf-8",
+    )
+    _write_synthesized_note(
+        vault_root / "concepts" / "agent-memory.md",
+        title="Agent Memory",
+        page_type="concept",
+        tags=["agent-memory"],
+        sources=["https://example.com/source"],
+        body="# Agent Memory\n\nURL backed source.\n",
+    )
+
+    # When: wiki context를 만든다.
+    context = VaultSchemaService(note_repository=VaultNoteRepository(root=vault_root)).wiki_context(
+        include_index=False
+    )
+
+    # Then: URL이 raw source metadata와 일치하면 미사용 raw source로 보지 않는다.
+    assert not any(
+        issue.code == "raw_source_without_synthesis" and issue.path == "raw/articles/source.md"
+        for issue in context.issue_candidates
+    )
 
 
 def test_reconcile_taxonomy_supports_dry_run_then_schema_apply(tmp_path: Path) -> None:
@@ -767,3 +931,57 @@ def test_reconcile_taxonomy_does_not_treat_invalid_add_tags_as_allowed(
     assert applied.unknown_tags == ["needs review"]
     assert applied.changed_files == []
     assert "needs review" not in (vault_root / "SCHEMA.md").read_text(encoding="utf-8")
+
+
+def test_reconcile_taxonomy_does_not_add_unused_rename_target(
+    tmp_path: Path,
+) -> None:
+    # Given: rename old tag가 어떤 page에서도 사용되지 않는다.
+    vault_root = tmp_path / "vault"
+    _write_schema(vault_root)
+    _write_synthesized_note(
+        vault_root / "concepts" / "agent-memory.md",
+        title="Agent Memory",
+        page_type="concept",
+        tags=["agent-memory"],
+        sources=["raw/hermes/source.md"],
+        body="# Agent Memory\n",
+    )
+    schema_service = VaultSchemaService(note_repository=VaultNoteRepository(root=vault_root))
+
+    # When: 사용되지 않는 old tag에 대한 rename decision을 apply한다.
+    applied = schema_service.reconcile_taxonomy(
+        apply=True,
+        decisions={"rename": {"typo-old": "unused-target"}},
+    )
+
+    # Then: note rewrite가 없는 rename target을 taxonomy에 추가하지 않는다.
+    assert applied.changed_files == []
+    assert "unused-target" not in (vault_root / "SCHEMA.md").read_text(encoding="utf-8")
+
+
+def test_reconcile_taxonomy_apply_does_not_crash_when_schema_is_missing(
+    tmp_path: Path,
+) -> None:
+    # Given: SCHEMA.md 없이 synthesized page만 있는 vault가 있다.
+    vault_root = tmp_path / "vault"
+    _write_synthesized_note(
+        vault_root / "concepts" / "agent-memory.md",
+        title="Agent Memory",
+        page_type="concept",
+        tags=["agent-memory"],
+        sources=["raw/hermes/source.md"],
+        body="# Agent Memory\n",
+    )
+    schema_service = VaultSchemaService(note_repository=VaultNoteRepository(root=vault_root))
+
+    # When: missing schema 상태에서 add decision을 apply한다.
+    applied = schema_service.reconcile_taxonomy(
+        apply=True,
+        decisions={"add": ["agent-memory"]},
+    )
+
+    # Then: 임의 SCHEMA.md를 생성하지 않고 미해결 tag를 응답으로 유지한다.
+    assert applied.changed_files == []
+    assert applied.unknown_tags == ["agent-memory"]
+    assert not (vault_root / "SCHEMA.md").exists()
