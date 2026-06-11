@@ -35,6 +35,34 @@ sha256: {compute_sha256(body)}
     )
 
 
+def _write_synthesized_note(
+    path: Path,
+    *,
+    title: str,
+    page_type: str,
+    tags: list[str],
+    sources: list[str],
+    body: str,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tags_text = ", ".join(tags)
+    sources_text = ", ".join(sources)
+    path.write_text(
+        f"""---
+title: {title}
+created: 2026-06-10
+updated: 2026-06-10
+type: {page_type}
+tags: [{tags_text}]
+sources: [{sources_text}]
+confidence: medium
+contested: false
+---
+{body}""",
+        encoding="utf-8",
+    )
+
+
 def test_validate_write_rejects_invalid_synthesized_frontmatter(tmp_path: Path) -> None:
     # Given: tag taxonomy가 있는 LLM Wiki vault가 있다.
     vault_root = tmp_path / "vault"
@@ -488,3 +516,72 @@ raw body
         "concepts/bad.md",
         "raw/hermes/bad.md",
     }
+
+
+def test_wiki_context_returns_schema_index_recent_log_and_health(tmp_path: Path) -> None:
+    # Given: SCHEMA, index, log가 있는 vault가 있다.
+    vault_root = tmp_path / "vault"
+    _write_schema(vault_root)
+    (vault_root / "index.md").write_text("# Wiki Index\n\n## Concepts\n", encoding="utf-8")
+    (vault_root / "log.md").write_text(
+        "# Wiki Log\n\n## [2026-06-08] create | old\n## [2026-06-10] lint | recent\n",
+        encoding="utf-8",
+    )
+
+    # When: MCP context-first workflow용 context를 만든다.
+    context = VaultSchemaService(note_repository=VaultNoteRepository(root=vault_root)).wiki_context(
+        recent_log_lines=1
+    )
+
+    # Then: LLM은 별도 파일 읽기 없이 schema/index/log/health를 확인할 수 있다.
+    assert "## Tag taxonomy" in context.schema_text
+    assert "# Wiki Index" in context.index
+    assert context.recent_log == "## [2026-06-10] lint | recent"
+    assert context.parsed_schema.allowed_tags == [
+        "agent-memory",
+        "knowledge-base",
+        "mcp",
+        "verification",
+    ]
+    assert context.health.schema_parse_ok is True
+    assert context.health.unknown_tag_count == 0
+
+
+def test_wiki_context_can_omit_schema_rules_from_payload(tmp_path: Path) -> None:
+    # Given: SCHEMA.md가 있는 vault가 있다.
+    vault_root = tmp_path / "vault"
+    _write_schema(vault_root)
+
+    # When: schema/rules payload를 제외해 context 크기를 줄인다.
+    context = VaultSchemaService(note_repository=VaultNoteRepository(root=vault_root)).wiki_context(
+        include_schema_rules=False
+    )
+
+    # Then: health 계산은 실제 schema 기준이지만 응답 payload의 schema/rule 필드는 비운다.
+    assert context.schema_text == ""
+    assert context.parsed_schema.schema_parse_ok is False
+    assert context.parsed_schema.allowed_tags == []
+    assert context.health.schema_parse_ok is True
+
+
+def test_wiki_context_recent_log_skips_provenance_trailer(tmp_path: Path) -> None:
+    # Given: log.md 끝에 write provenance trailer가 붙어 있다.
+    vault_root = tmp_path / "vault"
+    _write_schema(vault_root)
+    (vault_root / "log.md").write_text(
+        (
+            "# Wiki Log\n\n"
+            "## [2026-06-08] create | old\n"
+            "## [2026-06-10] lint | recent\n"
+            "<!-- kb-provenance: source_hash=abc; operation=write_note; actor=test -->\n"
+        ),
+        encoding="utf-8",
+    )
+
+    # When: 최근 log 1줄만 요청한다.
+    context = VaultSchemaService(note_repository=VaultNoteRepository(root=vault_root)).wiki_context(
+        recent_log_lines=1
+    )
+
+    # Then: provenance comment가 아니라 실제 최신 durable log entry를 반환한다.
+    assert context.recent_log == "## [2026-06-10] lint | recent"

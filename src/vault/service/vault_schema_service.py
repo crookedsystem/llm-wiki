@@ -28,7 +28,12 @@ from vault.service.result.schema_validation_result import (
     VaultValidationResult,
 )
 from vault.service.result.wiki_context_result import (
+    WikiContext,
+    WikiContextHealth,
     WikiContextIssueCandidate,
+    WikiContextMap,
+    WikiContextSummary,
+    WikiPageContext,
     WikiPageDraft,
     WikiUpdateSuggestion,
 )
@@ -94,6 +99,49 @@ class VaultSchemaService(FrozenModel):
                 )
             )
         return _validation_result(issues)
+
+    def wiki_context(
+        self,
+        *,
+        recent_log_lines: int = 30,
+        include_schema_rules: bool = True,
+        include_index: bool = True,
+    ) -> WikiContext:
+        schema_text = self._read_optional_note("SCHEMA.md")
+        index_text = self._read_optional_note("index.md") if include_index else ""
+        log_text = self._read_optional_note("log.md")
+        recent_log = _tail_nonempty_lines(log_text, recent_log_lines)
+        parsed_schema = parse_schema_document(schema_text)
+        validation = self.validate_vault()
+        markdown_notes = self.note_repository.markdown_notes()
+        relative_paths = [self.note_repository.relative_path(path) for path in markdown_notes]
+        wiki_map, issue_candidates, update_suggestions = self._build_wiki_context_guidance(
+            index_text=index_text,
+            include_index_guidance=include_index,
+            validation=validation,
+        )
+        entities = [page for page in wiki_map.pages if page.page_type == "entity"]
+        return WikiContext(
+            schema=schema_text if include_schema_rules else "",
+            index=index_text,
+            recent_log=recent_log,
+            parsed_schema=parsed_schema if include_schema_rules else _empty_parsed_wiki_schema(),
+            summary=WikiContextSummary(
+                total_notes=len(relative_paths),
+                synthesized_pages=sum(1 for path in relative_paths if _is_synthesized_path(path)),
+                raw_sources=sum(1 for path in relative_paths if _is_raw_path(path)),
+                last_log_entries=len(recent_log.splitlines()) if recent_log else 0,
+            ),
+            health=WikiContextHealth(
+                schema_parse_ok=parsed_schema.schema_parse_ok,
+                unknown_tag_count=validation.summary.unknown_tags,
+                missing_frontmatter_count=validation.summary.missing_frontmatter,
+            ),
+            wiki_map=wiki_map,
+            entities=entities,
+            issue_candidates=issue_candidates,
+            update_suggestions=update_suggestions,
+        )
 
     def _validate_write_issues(self, note_path: str, content: str) -> list[SchemaValidationIssue]:
         if note_path == "SCHEMA.md":
@@ -435,6 +483,282 @@ class VaultSchemaService(FrozenModel):
             for tag in tags:
                 counts[tag] = counts.get(tag, 0) + 1
         return dict(sorted(counts.items()))
+
+    def _build_wiki_context_guidance(
+        self,
+        *,
+        index_text: str,
+        include_index_guidance: bool,
+        validation: VaultValidationResult,
+    ) -> tuple[WikiContextMap, list[WikiContextIssueCandidate], list[WikiUpdateSuggestion]]:
+        page_drafts: dict[str, WikiPageDraft] = {}
+        raw_sources: list[str] = []
+        raw_source_urls_by_path: dict[str, set[str]] = {}
+        for path in self.note_repository.markdown_notes():
+            relative_path = self.note_repository.relative_path(path)
+            content = path.read_text(encoding="utf-8")
+            if _is_raw_path(relative_path):
+                raw_sources.append(relative_path)
+                raw_frontmatter, _raw_body, _raw_issues = _frontmatter_mapping(
+                    relative_path,
+                    content,
+                )
+                raw_source_urls_by_path[relative_path] = _raw_source_urls(raw_frontmatter)
+                continue
+            if not _is_synthesized_path(relative_path):
+                continue
+
+            frontmatter, body, _issues = _frontmatter_mapping(relative_path, content)
+            page_drafts[relative_path] = WikiPageDraft(
+                path=relative_path,
+                title=_context_page_title(relative_path, frontmatter, body),
+                page_type=_scalar_string(frontmatter.get("type")) if frontmatter else None,
+                tags=(_frontmatter_list(frontmatter.get("tags")) or []) if frontmatter else [],
+                sources=_nonblank_strings(_frontmatter_list(frontmatter.get("sources")) or [])
+                if frontmatter
+                else [],
+                body=body,
+            )
+
+        page_paths = sorted(page_drafts)
+        link_graph: dict[str, list[str]] = {path: [] for path in page_paths}
+        inbound_links: dict[str, list[str]] = {path: [] for path in page_paths}
+        issue_candidates: list[WikiContextIssueCandidate] = []
+        update_suggestions: list[WikiUpdateSuggestion] = []
+
+        for page_path in page_paths:
+            for target in _extract_wikilink_targets(page_drafts[page_path].body):
+                resolved_targets = _resolve_wikilink_target(target, page_drafts)
+                if len(resolved_targets) == 1:
+                    resolved_target = resolved_targets[0]
+                    if (
+                        resolved_target != page_path
+                        and resolved_target not in link_graph[page_path]
+                    ):
+                        link_graph[page_path].append(resolved_target)
+                    continue
+                if not resolved_targets:
+                    issue_candidates.append(
+                        WikiContextIssueCandidate(
+                            code="broken_wikilink",
+                            path=page_path,
+                            message=f"Wikilink [[{target}]] does not resolve to a synthesized page",
+                            related_paths=[target],
+                        )
+                    )
+                    update_suggestions.append(
+                        WikiUpdateSuggestion(
+                            action="repair_wikilink",
+                            path=page_path,
+                            reason=f"Replace or create the unresolved wikilink [[{target}]]",
+                            related_paths=[target],
+                        )
+                    )
+                    continue
+                issue_candidates.append(
+                    WikiContextIssueCandidate(
+                        code="ambiguous_wikilink",
+                        path=page_path,
+                        message=f"Wikilink [[{target}]] matches multiple synthesized pages",
+                        related_paths=resolved_targets,
+                    )
+                )
+                update_suggestions.append(
+                    WikiUpdateSuggestion(
+                        action="disambiguate_wikilink",
+                        path=page_path,
+                        reason=f"Use an explicit path or title for ambiguous wikilink [[{target}]]",
+                        related_paths=resolved_targets,
+                    )
+                )
+
+        link_graph = {path: sorted(targets) for path, targets in sorted(link_graph.items())}
+        for source_path, target_paths in link_graph.items():
+            for target_path in target_paths:
+                inbound_links[target_path].append(source_path)
+        inbound_links = {path: sorted(sources) for path, sources in sorted(inbound_links.items())}
+
+        raw_source_set = set(raw_sources)
+        raw_paths_by_source_url = _raw_paths_by_source_url(raw_source_urls_by_path)
+        referenced_raw_sources: set[str] = set()
+        pages_by_type: dict[str, list[str]] = {}
+        for page_path in page_paths:
+            draft = page_drafts[page_path]
+            pages_by_type.setdefault(draft.page_type or "unknown", []).append(page_path)
+            for source in draft.sources:
+                if not source.startswith("raw/"):
+                    referenced_raw_sources.update(raw_paths_by_source_url.get(source, set()))
+                    continue
+                if source in raw_source_set:
+                    referenced_raw_sources.add(source)
+                    continue
+                issue_candidates.append(
+                    WikiContextIssueCandidate(
+                        code="missing_raw_source",
+                        path=page_path,
+                        message=f"Frontmatter source {source} does not exist in raw/",
+                        severity="error",
+                        related_paths=[source],
+                    )
+                )
+                update_suggestions.append(
+                    WikiUpdateSuggestion(
+                        action="repair_source_reference",
+                        path=page_path,
+                        reason=f"Add missing raw source {source} or replace the source reference",
+                        related_paths=[source],
+                    )
+                )
+        pages_by_type = {key: sorted(value) for key, value in sorted(pages_by_type.items())}
+
+        pages: list[WikiPageContext] = []
+        for page_path in page_paths:
+            draft = page_drafts[page_path]
+            indexed = _index_mentions_page(index_text, page_path, page_drafts)
+            pages.append(
+                WikiPageContext(
+                    path=page_path,
+                    title=draft.title,
+                    page_type=draft.page_type,
+                    tags=draft.tags,
+                    sources=draft.sources,
+                    outbound_links=link_graph[page_path],
+                    inbound_links=inbound_links[page_path],
+                    indexed=indexed,
+                )
+            )
+            related_pages = _related_page_candidates(page_path, page_drafts)
+            if include_index_guidance and not indexed:
+                issue_candidates.append(
+                    WikiContextIssueCandidate(
+                        code="unindexed_page",
+                        path=page_path,
+                        message="Synthesized page is not listed in index.md",
+                    )
+                )
+                update_suggestions.append(
+                    WikiUpdateSuggestion(
+                        action="add_index_entry",
+                        path=page_path,
+                        reason="Add the synthesized page to index.md under the right section",
+                    )
+                )
+            if len(link_graph[page_path]) < 2:
+                issue_candidates.append(
+                    WikiContextIssueCandidate(
+                        code="underlinked_page",
+                        path=page_path,
+                        message="Synthesized page has fewer than two outbound wikilinks",
+                        related_paths=related_pages,
+                    )
+                )
+                update_suggestions.append(
+                    WikiUpdateSuggestion(
+                        action="add_cross_links",
+                        path=page_path,
+                        reason=(
+                            "Add at least two relevant outbound wikilinks if the page "
+                            "should stay active"
+                        ),
+                        related_paths=related_pages,
+                    )
+                )
+            if not inbound_links[page_path]:
+                issue_candidates.append(
+                    WikiContextIssueCandidate(
+                        code="orphan_page",
+                        path=page_path,
+                        message=(
+                            "Synthesized page has no inbound wikilinks from other synthesized pages"
+                        ),
+                        related_paths=related_pages,
+                    )
+                )
+                update_suggestions.append(
+                    WikiUpdateSuggestion(
+                        action="connect_or_archive_page",
+                        path=page_path,
+                        reason=(
+                            "Add inbound links from related pages, or archive if it is "
+                            "no longer useful"
+                        ),
+                        related_paths=related_pages,
+                    )
+                )
+
+        for source_path, target_paths in link_graph.items():
+            for target_path in target_paths:
+                if source_path in link_graph[target_path]:
+                    continue
+                issue_candidates.append(
+                    WikiContextIssueCandidate(
+                        code="missing_backlink",
+                        path=target_path,
+                        message="Linked page does not link back to the referring page",
+                        related_paths=[source_path],
+                    )
+                )
+                update_suggestions.append(
+                    WikiUpdateSuggestion(
+                        action="add_backlink",
+                        path=target_path,
+                        reason=(
+                            "Consider adding a backlink to the referring page for "
+                            "bidirectional navigation"
+                        ),
+                        related_paths=[source_path],
+                    )
+                )
+
+        for raw_source in sorted(raw_source_set - referenced_raw_sources):
+            issue_candidates.append(
+                WikiContextIssueCandidate(
+                    code="raw_source_without_synthesis",
+                    path=raw_source,
+                    message="Raw source is not referenced by any synthesized wiki page",
+                )
+            )
+            update_suggestions.append(
+                WikiUpdateSuggestion(
+                    action="synthesize_or_link_raw_source",
+                    path=raw_source,
+                    reason=(
+                        "Create or update a synthesized page that cites this raw source "
+                        "if it is relevant"
+                    ),
+                )
+            )
+
+        for issue in validation.issues:
+            issue_candidates.append(
+                WikiContextIssueCandidate(
+                    code=f"schema_{issue.code}",
+                    path=issue.path,
+                    message=issue.message,
+                    severity=issue.severity,
+                    related_paths=[issue.value] if issue.value else [],
+                )
+            )
+            update_suggestions.append(
+                WikiUpdateSuggestion(
+                    action="repair_schema_issue",
+                    path=issue.path,
+                    reason=issue.message,
+                    related_paths=[issue.value] if issue.value else [],
+                )
+            )
+
+        _append_duplicate_title_guidance(page_drafts, issue_candidates, update_suggestions)
+        return (
+            WikiContextMap(
+                pages=pages,
+                pages_by_type=pages_by_type,
+                raw_sources=sorted(raw_sources),
+                link_graph=link_graph,
+            ),
+            _deduplicate_issue_candidates(issue_candidates),
+            _deduplicate_update_suggestions(update_suggestions),
+        )
 
 
 def _frontmatter_mapping(

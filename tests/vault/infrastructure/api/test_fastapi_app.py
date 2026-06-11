@@ -76,9 +76,11 @@ def test_fastapi_app은_tools_endpoint에서_mcp_tool_schema를_문서화한다(
     tools = response.json()
     write_note = next(tool for tool in tools if tool["name"] == "kb_write_note")
     search_notes = next(tool for tool in tools if tool["name"] == "kb_search_notes")
+    wiki_context = next(tool for tool in tools if tool["name"] == "kb_wiki_context")
     validate_vault = next(tool for tool in tools if tool["name"] == "kb_validate_vault")
     assert "complete Markdown note" in write_note["description"]
     assert "Search Markdown notes" in search_notes["description"]
+    assert "context bundle" in wiki_context["description"]
     assert "Validate the configured LLM Wiki vault" in validate_vault["description"]
     assert write_note["inputSchema"]["type"] == "object"
     assert write_note["inputSchema"]["required"] == ["note_path", "content"]
@@ -90,6 +92,7 @@ def test_fastapi_app은_tools_endpoint에서_mcp_tool_schema를_문서화한다(
     assert {tool["name"] for tool in tools} == {
         "kb_write_note",
         "kb_search_notes",
+        "kb_wiki_context",
         "kb_validate_vault",
     }
 

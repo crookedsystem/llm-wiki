@@ -11,6 +11,7 @@ from vault.dto.response.write_note_response import (
     write_note_response,
 )
 from vault.service.result.schema_validation_result import VaultValidationResult
+from vault.service.result.wiki_context_result import WikiContext
 from vault.service.vault_schema_service import VaultSchemaService
 from vault.service.vault_search_service import VaultSearchService
 from vault.service.vault_write_service import VaultWriteService
@@ -53,6 +54,24 @@ def register_vault_tools(
         request = SearchNotesRequest(query=query, limit=limit, path_prefix=path_prefix)
         result = search_service.search_notes(request.to_command())
         return search_notes_response(result)
+
+    @server.tool(
+        description=(
+            "Return a context bundle for schema-first LLM Wiki work: SCHEMA.md, index.md, "
+            "recent log.md lines, parsed frontmatter/tag rules, page/link map, entity "
+            "list, issue candidates, and update suggestions."
+        )
+    )
+    def kb_wiki_context(
+        recent_log_lines: int = 30,
+        include_schema_rules: bool = True,
+        include_index: bool = True,
+    ) -> WikiContext:
+        return schema_service.wiki_context(
+            recent_log_lines=recent_log_lines,
+            include_schema_rules=include_schema_rules,
+            include_index=include_index,
+        )
 
     @server.tool(
         description=(
