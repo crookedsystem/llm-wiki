@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from vault.entity.vault_note import compute_sha256
 from vault.infrastructure.repository.vault_note_repository import VaultNoteRepository
 from vault.service.vault_schema_service import VaultSchemaService
 
@@ -19,6 +20,19 @@ Allowed `type` values: `entity`, `concept`, `comparison`, `query`, `summary`.
 def _write_schema(vault_root: Path, schema: str = SCHEMA) -> None:
     vault_root.mkdir(parents=True, exist_ok=True)
     (vault_root / "SCHEMA.md").write_text(schema, encoding="utf-8")
+
+
+def _write_raw_note(path: Path, body: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"""---
+source_url: test://{path.stem}
+ingested: 2026-06-10
+sha256: {compute_sha256(body)}
+---
+{body}""",
+        encoding="utf-8",
+    )
 
 
 def test_validate_write_rejects_invalid_synthesized_frontmatter(tmp_path: Path) -> None:
@@ -277,3 +291,200 @@ contested: false
     assert [(issue.code, issue.field) for issue in result.issues] == [
         ("invalid_field_type", "confidence")
     ]
+
+
+def test_validate_write_requires_raw_frontmatter_and_body_sha256(tmp_path: Path) -> None:
+    # Given: schema가 준비된 LLM Wiki vault가 있다.
+    vault_root = tmp_path / "vault"
+    _write_schema(vault_root)
+    schema_service = VaultSchemaService(note_repository=VaultNoteRepository(root=vault_root))
+
+    # When: raw note에 frontmatter나 body-only sha256이 빠져 있다.
+    missing_raw_metadata = schema_service.validate_write(
+        "raw/hermes/session.md",
+        "# Raw Session\n",
+    )
+    wrong_hash = schema_service.validate_write(
+        "raw/hermes/session.md",
+        """---
+source_url: hermes-session:abc
+ingested: 2026-06-10
+sha256: bad
+---
+
+# Raw Session
+""",
+    )
+
+    # Then: raw frontmatter와 sha256 mismatch를 hard error로 보고한다.
+    assert [issue.code for issue in missing_raw_metadata.issues] == ["missing_frontmatter"]
+    assert [issue.code for issue in wrong_hash.issues] == ["raw_sha256_mismatch"]
+
+
+def test_validate_write_allows_raw_note_without_source_metadata(tmp_path: Path) -> None:
+    # Given: schema가 준비된 LLM Wiki vault가 있다.
+    vault_root = tmp_path / "vault"
+    _write_schema(vault_root)
+    schema_service = VaultSchemaService(note_repository=VaultNoteRepository(root=vault_root))
+    body = "# 조사 메모\n\n직접 조사해 정리한 raw 내용.\n"
+
+    # When: 외부 source 없이 raw note를 쓴다.
+    result = schema_service.validate_write(
+        "raw/manual/research.md",
+        f"""---
+ingested: 2026-06-10
+sha256: {compute_sha256(body)}
+---
+{body}""",
+    )
+
+    # Then: source metadata가 없어도 raw archive로 허용한다.
+    assert result.issues == []
+
+
+def test_validate_write_allows_multiple_raw_source_urls(tmp_path: Path) -> None:
+    # Given: schema가 준비된 LLM Wiki vault가 있다.
+    vault_root = tmp_path / "vault"
+    _write_schema(vault_root)
+    schema_service = VaultSchemaService(note_repository=VaultNoteRepository(root=vault_root))
+    body = "# Multi-source Raw\n"
+
+    # When: raw note가 여러 source URL을 가진다.
+    result = schema_service.validate_write(
+        "raw/articles/multi-source.md",
+        f"""---
+source_urls:
+  - https://example.com/one
+  - https://example.com/two
+ingested: 2026-06-10
+sha256: {compute_sha256(body)}
+---
+{body}""",
+    )
+
+    # Then: 다중 source URL metadata를 허용한다.
+    assert result.issues == []
+
+
+def test_validate_write_rejects_non_list_raw_source_urls(tmp_path: Path) -> None:
+    # Given: schema가 준비된 LLM Wiki vault가 있다.
+    vault_root = tmp_path / "vault"
+    _write_schema(vault_root)
+    schema_service = VaultSchemaService(note_repository=VaultNoteRepository(root=vault_root))
+    body = "# Multi-source Raw\n"
+
+    # When: source_urls가 YAML list가 아니다.
+    result = schema_service.validate_write(
+        "raw/articles/multi-source.md",
+        f"""---
+source_urls: https://example.com/one
+ingested: 2026-06-10
+sha256: {compute_sha256(body)}
+---
+{body}""",
+    )
+
+    # Then: 다중 source field의 타입 오류를 보고한다.
+    assert [(issue.code, issue.field) for issue in result.issues] == [
+        ("invalid_field_type", "source_urls")
+    ]
+
+
+def test_validate_write_rejects_non_string_raw_source_url(tmp_path: Path) -> None:
+    # Given: schema가 준비된 LLM Wiki vault가 있다.
+    vault_root = tmp_path / "vault"
+    _write_schema(vault_root)
+    schema_service = VaultSchemaService(note_repository=VaultNoteRepository(root=vault_root))
+
+    # When: raw source_url frontmatter가 문자열이 아니다.
+    result = schema_service.validate_write(
+        "raw/hermes/session.md",
+        """---
+source_url: [hermes-session:abc]
+ingested: 2026-06-10
+sha256: abc
+---
+
+# Raw Session
+""",
+    )
+
+    # Then: source identifier로 사용할 수 없는 값을 타입 오류로 보고한다.
+    assert [(issue.code, issue.field) for issue in result.issues] == [
+        ("invalid_field_type", "source_url"),
+        ("raw_sha256_mismatch", "sha256"),
+    ]
+
+
+def test_validate_write_rejects_non_string_raw_sha256(tmp_path: Path) -> None:
+    # Given: schema가 준비된 LLM Wiki vault가 있다.
+    vault_root = tmp_path / "vault"
+    _write_schema(vault_root)
+    schema_service = VaultSchemaService(note_repository=VaultNoteRepository(root=vault_root))
+
+    # When: raw sha256 frontmatter가 문자열이 아니다.
+    result = schema_service.validate_write(
+        "raw/hermes/session.md",
+        """---
+source_url: hermes-session:abc
+ingested: 2026-06-10
+sha256: [bad]
+---
+
+# Raw Session
+""",
+    )
+
+    # Then: hash 비교를 건너뛰지 않고 필드 타입 오류를 보고한다.
+    assert [(issue.code, issue.field) for issue in result.issues] == [
+        ("invalid_field_type", "sha256")
+    ]
+
+
+def test_validate_vault_reports_schema_hygiene_summary(tmp_path: Path) -> None:
+    # Given: valid schema, invalid synthesized page, invalid raw note가 함께 있다.
+    vault_root = tmp_path / "vault"
+    _write_schema(vault_root)
+    (vault_root / "concepts").mkdir()
+    (vault_root / "concepts" / "bad.md").write_text(
+        """---
+title: Bad
+created: 2026-06-10
+updated: 2026-06-10
+type: concept
+tags: [not-in-schema]
+sources: []
+confidence: high
+contested: false
+---
+
+# Bad
+""",
+        encoding="utf-8",
+    )
+    (vault_root / "raw" / "hermes").mkdir(parents=True)
+    (vault_root / "raw" / "hermes" / "bad.md").write_text(
+        """---
+source_url: hermes-session:bad
+ingested: 2026-06-10
+sha256: bad
+---
+
+raw body
+""",
+        encoding="utf-8",
+    )
+
+    # When: vault 전체 schema hygiene를 검증한다.
+    result = VaultSchemaService(
+        note_repository=VaultNoteRepository(root=vault_root)
+    ).validate_vault()
+
+    # Then: content migration 없이 deterministic schema issue만 집계된다.
+    assert result.summary.unknown_tags == 1
+    assert result.summary.empty_sources == 1
+    assert result.summary.raw_sha256_mismatch == 1
+    assert {issue.path for issue in result.issues} == {
+        "concepts/bad.md",
+        "raw/hermes/bad.md",
+    }

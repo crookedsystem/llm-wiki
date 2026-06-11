@@ -11,11 +11,12 @@ from common.model import FrozenModel
 from vault.constant.schema import (
     DATE_PATTERN,
     META_NOTE_PATHS,
+    REQUIRED_RAW_FIELDS,
     REQUIRED_SYNTH_FIELDS,
     SYNTHESIZED_DIRS,
     SYNTHESIZED_TYPE_BY_DIR,
 )
-from vault.entity.vault_note import parse_note
+from vault.entity.vault_note import compute_sha256, parse_note
 from vault.error.schema_validation_error import SchemaValidationError
 from vault.infrastructure.repository.vault_note_repository import VaultNoteRepository
 from vault.service.result.parsed_wiki_schema import ParsedWikiSchema
@@ -39,11 +40,61 @@ class VaultSchemaService(FrozenModel):
         if result.issues:
             raise SchemaValidationError(result.issues)
 
+    def validate_vault(self, *, include_raw: bool = True) -> VaultValidationResult:
+        issues: list[SchemaValidationIssue] = []
+        schema_path = self.note_repository.vault_root / "SCHEMA.md"
+        if schema_path.exists():
+            issues.extend(self._validate_schema_note(schema_path.read_text(encoding="utf-8")))
+        else:
+            issues.append(
+                SchemaValidationIssue(
+                    code="schema_missing",
+                    path="SCHEMA.md",
+                    field="SCHEMA.md",
+                    message="Vault schema file is required before validating wiki pages",
+                )
+            )
+
+        for path in self.note_repository.markdown_notes():
+            relative_path = self.note_repository.relative_path(path)
+            if relative_path == "SCHEMA.md" or _is_meta_note_path(relative_path):
+                continue
+            if _is_raw_path(relative_path):
+                if include_raw:
+                    issues.extend(
+                        self._validate_raw_note(relative_path, path.read_text(encoding="utf-8"))
+                    )
+                continue
+            if _is_synthesized_path(relative_path):
+                issues.extend(
+                    self._validate_synthesized_note(
+                        relative_path,
+                        path.read_text(encoding="utf-8"),
+                        self._parsed_schema(),
+                    )
+                )
+                continue
+            issues.append(
+                SchemaValidationIssue(
+                    code="unsupported_note_path",
+                    path=relative_path,
+                    field="note_path",
+                    value=relative_path,
+                    message=(
+                        "Note path must be SCHEMA.md, index.md, log.md, raw/**, "
+                        "entities/**, concepts/**, comparisons/**, queries/**, or _meta/**"
+                    ),
+                )
+            )
+        return _validation_result(issues)
+
     def _validate_write_issues(self, note_path: str, content: str) -> list[SchemaValidationIssue]:
         if note_path == "SCHEMA.md":
             return self._validate_schema_note(content)
         if _is_meta_note_path(note_path):
             return []
+        if _is_raw_path(note_path):
+            return self._validate_raw_note(note_path, content)
         if _is_synthesized_path(note_path):
             schema_issues = self._schema_write_blocking_issues()
             if schema_issues:
@@ -267,6 +318,91 @@ class VaultSchemaService(FrozenModel):
             )
         return issues
 
+    def _validate_raw_note(self, note_path: str, content: str) -> list[SchemaValidationIssue]:
+        frontmatter, body, issues = _frontmatter_mapping(note_path, content)
+        if frontmatter is None:
+            return issues
+
+        for field_name in REQUIRED_RAW_FIELDS:
+            if field_name not in frontmatter:
+                code = f"raw_missing_{field_name}"
+                issues.append(
+                    SchemaValidationIssue(
+                        code=code,
+                        path=note_path,
+                        field=field_name,
+                        message=f"Raw notes must include frontmatter field: {field_name}",
+                    )
+                )
+
+        source_url = _scalar_string(frontmatter.get("source_url"))
+        if "source_url" in frontmatter and source_url is None:
+            issues.append(
+                SchemaValidationIssue(
+                    code="invalid_field_type",
+                    path=note_path,
+                    field="source_url",
+                    message="source_url must be a YAML string",
+                )
+            )
+
+        source_urls = _frontmatter_list(frontmatter.get("source_urls"))
+        if "source_urls" in frontmatter and source_urls is None:
+            issues.append(
+                SchemaValidationIssue(
+                    code="invalid_field_type",
+                    path=note_path,
+                    field="source_urls",
+                    message="source_urls must be a YAML list of strings",
+                )
+            )
+
+        ingested = _date_string(frontmatter.get("ingested"))
+        if "ingested" in frontmatter and (ingested is None or not DATE_PATTERN.match(ingested)):
+            issues.append(
+                SchemaValidationIssue(
+                    code="invalid_ingested_date",
+                    path=note_path,
+                    field="ingested",
+                    value=str(frontmatter.get("ingested")),
+                    message="ingested must use YYYY-MM-DD format",
+                )
+            )
+
+        if not body.strip():
+            issues.append(
+                SchemaValidationIssue(
+                    code="raw_empty_body",
+                    path=note_path,
+                    field="body",
+                    message="Raw note body must not be empty",
+                )
+            )
+
+        expected_hash = _scalar_string(frontmatter.get("sha256"))
+        if "sha256" in frontmatter and expected_hash is None:
+            issues.append(
+                SchemaValidationIssue(
+                    code="invalid_field_type",
+                    path=note_path,
+                    field="sha256",
+                    message="sha256 must be a YAML string",
+                )
+            )
+        elif expected_hash is not None:
+            actual_hash = compute_sha256(body)
+            if expected_hash != actual_hash:
+                issues.append(
+                    SchemaValidationIssue(
+                        code="raw_sha256_mismatch",
+                        path=note_path,
+                        field="sha256",
+                        value=expected_hash,
+                        message="raw sha256 must equal SHA-256 of the body after frontmatter",
+                    )
+                )
+        return issues
+
     def _parsed_schema(self) -> ParsedWikiSchema:
         return parse_schema_document(self._read_optional_note("SCHEMA.md"))
 
@@ -354,6 +490,11 @@ def _allowed_types_for_path(note_path: str) -> set[str]:
 def _is_synthesized_path(note_path: str) -> bool:
     parts = Path(note_path).parts
     return bool(parts) and parts[0] in SYNTHESIZED_DIRS
+
+
+def _is_raw_path(note_path: str) -> bool:
+    parts = Path(note_path).parts
+    return bool(parts) and parts[0] == "raw"
 
 
 def _is_meta_note_path(note_path: str) -> bool:
