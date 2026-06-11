@@ -19,8 +19,11 @@ Do not use it for one-off answers that should not be saved, or when the MCP serv
 
 The underlying server exposes these tool names:
 
-- `kb_write_note(note_path, content, if_hash?)` — write a complete note inside the configured vault. Existing notes require optimistic concurrency.
+- `kb_write_note(note_path, content, if_hash?)` — write a complete note inside the configured vault. It enforces the vault schema before writing. Existing notes require optimistic concurrency.
 - `kb_search_notes(query, limit?, path_prefix?)` — search the Markdown LLM Wiki vault and return ranked paths, titles, page types, tags, content hashes, and line snippets.
+- `kb_wiki_context(recent_log_lines?, include_schema_rules?, include_index?)` — return the schema-first context bundle: `SCHEMA.md`, `index.md`, recent `log.md`, parsed rules, current page/link map, explicit entity list, issue candidates, and update suggestions.
+- `kb_validate_vault(include_raw?)` — validate deterministic schema hygiene across the vault: frontmatter, required fields, path/type consistency, tag taxonomy, raw metadata, and raw body hashes.
+- `kb_reconcile_taxonomy(apply?, decisions?)` — dry-run or apply deterministic tag taxonomy repair. Use it for tag add/rename/remove decisions, not for content migration.
 
 Vault and graph counters are exposed as a REST API endpoint at `GET /metrics`, not as MCP tools.
 Agent UIs may prefix MCP tool names. If you see prefixed names, map them back to the raw tool names above.
@@ -49,10 +52,16 @@ queries/         # valuable answered questions worth preserving
 
 ## First actions in a session
 
-1. Confirm the MCP server is connected by listing tools or calling `kb_search_notes` with a narrow orientation query such as `index`.
-2. Orient before writing. If the vault is directly readable through file tools, read `SCHEMA.md`, `index.md`, and the recent tail of `log.md`. If direct file reads are unavailable, use `kb_search_notes` for `SCHEMA`, `index`, `log`, and topic-specific searches.
-3. Search for existing pages before creating new ones. Avoid duplicate entity or concept pages.
-4. Decide the access mode:
+1. Confirm the MCP server is connected by listing tools or calling `kb_wiki_context`.
+2. Start every wiki task with `kb_wiki_context` when it is available. Treat the returned `parsed_schema` as the write contract, not as background documentation, and treat `entities`, `wiki_map`, `issue_candidates`, and `update_suggestions` as the first-pass graph maintenance backlog.
+3. Use `parsed_schema.required_synthesized_frontmatter`, `parsed_schema.allowed_types`, and `parsed_schema.tag_taxonomy` before creating or updating pages. Do not invent page types or tags.
+4. Use `entities`, `wiki_map.pages`, `wiki_map.pages_by_type`, and `wiki_map.link_graph` to choose whether to update an existing entity/concept, add links, or create a new page.
+5. Review `issue_candidates` before writing. Prefer fixing broken wikilinks, missing backlinks, orphan/underlinked pages, unindexed pages, and raw sources without synthesis when they are relevant to the user's task.
+6. Use `update_suggestions` as suggested actions, not blind commands. Apply only suggestions that improve durable wiki structure.
+7. Check `index` and recent `log` from `kb_wiki_context` before creating a page. Update existing pages instead of duplicating them, and avoid repeating recent work.
+8. If `health` reports schema errors, fix deterministic hygiene with `kb_validate_vault`/`kb_reconcile_taxonomy` before creating new synthesized content.
+9. Search for existing topic pages with `kb_search_notes` before creating new ones. Avoid duplicate entity or concept pages.
+10. Decide the access mode:
    - **File-readable mode:** safe to update existing notes because you can read the complete current file, reconstruct it, and pass the exact current `content_hash` as `if_hash`.
    - **MCP-only mode:** `kb_search_notes` returns snippets, not full note bodies. Do not overwrite an existing note from snippets alone. Create new notes only, or ask the user for the full current note content before updating.
 
@@ -96,7 +105,7 @@ contested: false
 ---
 ```
 
-`confidence` and `contested` are optional but useful. Use `confidence: low` for single-source, speculative, or fast-moving claims. Use `contested: true` when sources conflict and explain the conflict in the body.
+All listed fields are required for synthesized pages. `confidence` and `contested` are not optional: use `confidence: low` for single-source, speculative, or fast-moving claims, and use `contested: true` when sources conflict and explain the conflict in the body. `tags` must come from the current `SCHEMA.md` tag taxonomy. If a needed tag is missing, update `SCHEMA.md` first or ask the user.
 
 ### Page body pattern
 
@@ -148,8 +157,9 @@ If `SCHEMA.md` is missing or the user is creating a new vault, create it before 
 - Append every durable action to `log.md`.
 
 ## Frontmatter
-Required fields: `title`, `created`, `updated`, `type`, `tags`, `sources`.
+Required fields: `title`, `created`, `updated`, `type`, `tags`, `sources`, `confidence`, `contested`.
 Allowed `type` values: `entity`, `concept`, `comparison`, `query`, `summary`.
+Tags must be declared in this file before a page can use them.
 
 ## Tag taxonomy
 [List 10-20 allowed tags for this domain before using them.]
@@ -159,6 +169,17 @@ Allowed `type` values: `entity`, `concept`, `comparison`, `query`, `summary`.
 - Do not create pages for passing mentions.
 - Split pages over about 200 lines.
 - Mark contradictions with `contested: true` and explain both claims with dates and sources.
+
+## Entity update policy
+- Treat `entities/` pages as canonical profiles for real-world people, orgs, products, models, projects, standards, APIs, and datasets.
+- Search existing entity pages before creating a new one. Merge into the existing page when aliases, title, slug, sources, or relationships point to the same real-world entity.
+- Preserve dated facts instead of silently overwriting them. If sources conflict, lower `confidence`, set `contested: true`, and explain both claims.
+- Update `sources`, `## Sources`, `## Relationships`, backlinks, `index.md`, and `log.md` when the entity changes.
+
+## Link repair policy
+- On every write, use `kb_wiki_context` issue candidates to repair relevant `broken_wikilink`, `ambiguous_wikilink`, `missing_backlink`, `orphan_page`, `underlinked_page`, `unindexed_page`, `missing_raw_source`, and `duplicate_title` issues.
+- Replace broken links with a canonical existing page when one exists; create a new page only when page thresholds are met; otherwise use plain text or link to a broader existing page.
+- After writing, re-check context for the changed paths and fix any schema or graph damage introduced by the update.
 ```
 
 ## index.md structure
@@ -206,7 +227,7 @@ Rotate to `log-YYYY.md` if `log.md` becomes too large, then start a fresh `log.m
 
 ## Provenance and hash rules
 
-`kb_write_note` appends a provenance trailer automatically after the content you provide:
+`kb_write_note` appends a provenance trailer automatically after synthesized and meta note content you provide:
 
 ```markdown
 <!-- kb-provenance: source_hash=<sha256-of-content-before-trailer>; operation=write_note; actor=llm-wiki -->
@@ -218,15 +239,159 @@ Do not hand-author that trailer in the `content` argument unless you are intenti
 - `content_hash` is SHA-256 of the final stored file, including the provenance trailer.
 - For the next update, pass `content_hash` as `if_hash`, not `source_hash`.
 - When updating from direct filesystem reads, compute SHA-256 over the exact current file text, including the provenance trailer and final newline.
+- Raw notes under `raw/` are the exception: `kb_write_note` does not append the provenance trailer to raw notes because the raw frontmatter `sha256` must keep matching the body-only source archive bytes.
+
+## Raw write contract
+
+Use the existing `kb_write_note` tool for raw notes; do not invent a separate ingest flow unless the user explicitly asks for one. Every `raw/**.md` note must include frontmatter before the body. `ingested` and body-only `sha256` are required; source metadata is optional because raw notes may contain direct research without a source URL.
+
+```yaml
+---
+ingested: YYYY-MM-DD
+sha256: "<sha256 of body only, excluding frontmatter>"
+source_url: "https://example.com/source-or-hermes-session-id"
+# or:
+source_urls:
+  - "https://example.com/source-a"
+  - "https://example.com/source-b"
+---
+```
+
+For Hermes sources, add enough optional metadata to identify the source without copying secrets:
+
+```yaml
+---
+source_url: "hermes-session:20260609_074425_ae8639a9"
+ingested: 2026-06-10
+sha256: "<sha256 of body only>"
+type: raw-session
+source_system: hermes
+profile: default
+sessions:
+  - 20260609_074425_ae8639a9
+---
+```
+
+Raw files are source archives. Do not edit a raw body after creation. If the source changes, write a new raw note or explicitly record drift. Only repair raw frontmatter when metadata is missing, and preserve body bytes exactly.
 
 ## Write policy
 
-- `kb_write_note` writes the full note body. For updates, reconstruct the full target file and pass the current full-file hash as `if_hash`.
+- `kb_write_note` writes the full note body and validates it against the schema first. Treat schema validation errors as repair instructions: fix the content and retry; do not bypass validation.
+- For updates, reconstruct the full target file and pass the current full-file hash as `if_hash`.
+- Before every meaningful write, call `kb_wiki_context` and build a write set from `wiki_map`, `issue_candidates`, and `update_suggestions`: target note, related notes that need backlinks or repaired links, `index.md`, `log.md`, and `SCHEMA.md` if tags change.
 - Keep raw sources under `raw/` immutable. Corrections and synthesis belong in wiki pages such as `entities/`, `concepts/`, `comparisons/`, or `queries/`.
 - Every meaningful write should update `index.md` and append a concise entry to `log.md` unless the user explicitly requests a draft-only note.
 - Use lowercase kebab-case note paths such as `concepts/llm-wiki.md` and `entities/anthropic.md`.
 - Prefer `[[wikilinks]]` between wiki pages. New synthesized pages should have at least two useful outbound links when possible.
-- Preserve YAML frontmatter on wiki pages: `title`, `created`, `updated`, `type`, `tags`, and `sources`.
+- Preserve YAML frontmatter on wiki pages: `title`, `created`, `updated`, `type`, `tags`, `sources`, `confidence`, and `contested`.
+- After writes, rerun `kb_wiki_context` for graph health around changed paths and `kb_validate_vault` for schema/raw-hash hygiene. Fix issues introduced by the write before reporting success.
+- Do not create entity/comparison/concept batches unless the user explicitly asks for content migration. Schema repair and content synthesis are different operations.
+
+## Write-time graph maintenance
+
+Use the new context tools to strengthen the graph while writing, not as a separate cleanup chore:
+
+1. **Orient:** `kb_wiki_context` returns `parsed_schema`, `entities`, `wiki_map`, `issue_candidates`, and `update_suggestions`. Treat this as the current wiki graph.
+2. **Resolve identity:** Use top-level `entities`, `wiki_map.pages_by_type.entity`, entity titles, slugs, sources, inbound/outbound links, and `kb_search_notes` hits to decide whether the subject already has a canonical page.
+3. **Plan the write set:** Include every page whose meaning or navigation changes: the main note, reciprocal backlink targets, duplicate/alias pages to merge or disambiguate, `index.md`, `log.md`, and `SCHEMA.md` when taxonomy changes.
+4. **Apply only semantic repairs:** `update_suggestions` are candidate repairs. Apply suggestions when the relationship is meaningful; skip noisy backlinks that would not help future retrieval.
+5. **Verify:** Re-run `kb_wiki_context` after writing and make sure relevant `broken_wikilink`, `ambiguous_wikilink`, `missing_backlink`, `orphan_page`, `underlinked_page`, `unindexed_page`, `missing_raw_source`, and `duplicate_title` candidates were resolved or intentionally left with a log note.
+
+## Entity update policy
+
+Entity pages are canonical profiles, not one-source summaries. When a write mentions a person, org, product, model, project, protocol, dataset, standard, or API:
+
+1. Search first: inspect `wiki_map.pages_by_type.entity`, `index.md`, `kb_search_notes` results, and duplicate-title candidates before creating `entities/<slug>.md`.
+2. Update the existing entity when aliases, renamed products, title variants, source URLs, relationships, or surrounding pages point to the same real-world thing. Use a stable canonical slug; use display aliases like `[[entities/andrej-karpathy|Karpathy]]` when prose needs a shorter name.
+3. Create a new entity only when no canonical page exists, the entity meets the page threshold, and it is not merely a passing mention.
+4. Preserve history: add dated, sourced facts rather than silently replacing older facts. If a source changes an earlier claim, say what changed and cite both sources.
+5. Handle conflicts explicitly: set `contested: true`, lower `confidence`, and explain competing claims with dates/sources instead of picking a winner without evidence.
+6. Keep relationships current: add or prune `## Relationships` entries, update reciprocal backlinks when useful, and connect the entity to relevant concepts/comparisons/queries.
+7. Keep provenance current: add new raw paths to `sources:` and `## Sources`; remove a source only if the page no longer relies on it.
+8. If duplicate entity pages exist, merge or disambiguate them before adding more content. Do not spread one entity across multiple pages.
+9. Always bump `updated`, refresh the `index.md` one-line summary if the entity's meaning changed, and append `log.md` with created/updated paths.
+
+## Adding an entity page
+
+Use this flow when the source material introduces a real-world person, organization, product, model, project, protocol, dataset, standard, or API that should become a canonical profile:
+
+1. Read `entities` from `kb_wiki_context` before searching broadly. Treat it as the current canonical entity list, including path, title, tags, sources, links, and index status.
+2. Compare the candidate against `entities`, `wiki_map.pages_by_type.entity`, `index`, duplicate-title candidates, and `kb_search_notes` results. Resolve aliases, renamed products, abbreviations, and source overlap before deciding it is new.
+3. Create `entities/<stable-slug>.md` only after identity resolution shows no canonical page exists and the entity meets the page threshold.
+4. Use `type: entity`, tags from `parsed_schema.allowed_tags`, and at least one reliable source in `sources:`. If the source is raw material that is not in `raw/` yet, add the raw note first or cite the external source explicitly.
+5. Include `## Summary`, `## Key facts`, `## Relationships`, `## Open questions`, and `## Sources`. Link the entity to relevant concepts, comparisons, queries, or other entities with `[[wikilinks]]`.
+6. Update `index.md` under `## Entities` with one line for the new canonical page, append a `log.md` create/update entry, then rerun `kb_wiki_context` and repair relevant graph issues.
+
+Minimal entity page:
+
+```markdown
+---
+title: Example Entity
+created: YYYY-MM-DD
+updated: YYYY-MM-DD
+type: entity
+tags: [tag-from-schema]
+sources: [raw/articles/source-file.md]
+confidence: medium
+contested: false
+---
+
+# Example Entity
+
+## Summary
+One short paragraph explaining why this entity matters in the vault.
+
+## Key facts
+- Dated, source-backed fact.
+
+## Relationships
+- [[concepts/related-concept]] — why the relationship matters.
+
+## Open questions
+- What remains uncertain?
+
+## Sources
+- raw/articles/source-file.md
+```
+
+## Broken-link self-repair policy
+
+Treat broken links as graph damage to repair during the same write when they touch the task area:
+
+- `broken_wikilink`: if a canonical target exists, rewrite to the exact target path (`[[entities/openai]]`) or an aliased link (`[[entities/openai|OpenAI]]`). If no target exists, create one only when page thresholds are met; otherwise convert the link to plain text or link to a broader existing page.
+- `ambiguous_wikilink`: replace the link with an explicit path or alias. If ambiguity reflects duplicate pages, merge or disambiguate before writing new content.
+- `missing_backlink`: add a backlink only when it helps navigation or explains a durable relationship. Avoid mechanical backlinks that make pages noisy.
+- `underlinked_page` / `orphan_page`: use related paths from `update_suggestions` plus source semantics to add meaningful links, or log/archive pages that should not remain active.
+- `unindexed_page`: add the page to the correct `index.md` section with a one-line summary.
+- `missing_raw_source`: add the missing raw note, fix the source path, or remove the citation if the page does not rely on that source.
+- `duplicate_title`: merge same-entity/same-concept pages or rename them with disambiguating slugs before creating more links.
+
+Do not use `kb_reconcile_taxonomy` for link repair; it is for tag taxonomy decisions. Use `kb_validate_vault` for schema/frontmatter/raw-hash hygiene and `kb_wiki_context` for graph/link health.
+
+## MCP context-first workflow
+
+When LLM Wiki MCP tools are available, start every wiki task with `kb_wiki_context` and use the returned context as the source of truth:
+
+1. Read `parsed_schema.required_synthesized_frontmatter` before creating or updating synthesized pages.
+2. Choose `type` from `parsed_schema.allowed_types`; do not invent page types.
+3. Choose tags only from `parsed_schema.tag_taxonomy` / `parsed_schema.allowed_tags`.
+4. Read top-level `entities`, `wiki_map.pages_by_type`, and `wiki_map.link_graph` as the current entity/concept map. Use it to decide whether the task should update an existing page, create a new page, or only add links.
+5. Inspect `issue_candidates` for relevant graph/consistency problems:
+   - `broken_wikilink` / `ambiguous_wikilink` — repair link target spelling or create/disambiguate pages.
+   - `missing_backlink` — add bidirectional navigation when the relationship is meaningful.
+   - `orphan_page` / `underlinked_page` — connect useful pages to related pages, or archive stale pages.
+   - `unindexed_page` — add missing synthesized pages to `index.md`.
+   - `raw_source_without_synthesis` / `missing_raw_source` — synthesize/link useful raw sources or repair bad citations.
+   - `duplicate_title` — merge or disambiguate pages before adding more content.
+6. Treat `update_suggestions` as AI guidance. Apply them only when they are relevant and semantically correct; do not mechanically execute every suggestion.
+7. If a needed tag is missing, update `SCHEMA.md` first, run/dry-run `kb_reconcile_taxonomy`, or ask the user.
+8. Check `index` before creating a page; update existing pages instead of duplicating them.
+9. Check `recent_log` to avoid repeating work.
+10. If `health` reports schema errors, fix deterministic hygiene before creating new content.
+11. When writing raw notes, compute body-only `sha256` and use `kb_write_note`; do not invent a separate raw ingest flow.
+12. If `kb_write_note` returns schema errors, fix the content and retry. Do not bypass validation.
+
+`SCHEMA.md` is not documentation; it is the write contract that MCP enforces.
 
 ## LLM Wiki page flow
 
@@ -405,6 +570,9 @@ Hermes prefixes native MCP tools as `mcp_<server>_<tool>`. With the default `llm
 
 - `mcp_llm_wiki_kb_write_note`
 - `mcp_llm_wiki_kb_search_notes`
+- `mcp_llm_wiki_kb_wiki_context`
+- `mcp_llm_wiki_kb_validate_vault`
+- `mcp_llm_wiki_kb_reconcile_taxonomy`
 
 If these tools do not appear, run `hermes mcp list`, `hermes mcp test llm_wiki`, then restart the Hermes session or gateway. In an existing session, use `/reload-mcp` if available.
 

@@ -585,3 +585,307 @@ def test_wiki_context_recent_log_skips_provenance_trailer(tmp_path: Path) -> Non
 
     # Then: provenance comment가 아니라 실제 최신 durable log entry를 반환한다.
     assert context.recent_log == "## [2026-06-10] lint | recent"
+
+
+def test_wiki_context_omits_unindexed_guidance_when_index_is_excluded(
+    tmp_path: Path,
+) -> None:
+    # Given: index.md에 아직 없는 synthesized page가 있다.
+    vault_root = tmp_path / "vault"
+    _write_schema(vault_root)
+    _write_raw_note(vault_root / "raw" / "articles" / "source.md", "Source body\n")
+    _write_synthesized_note(
+        vault_root / "concepts" / "agent-memory.md",
+        title="Agent Memory",
+        page_type="concept",
+        tags=["agent-memory"],
+        sources=["raw/articles/source.md"],
+        body="# Agent Memory\n\nNo index context requested.\n",
+    )
+
+    # When: context payload 절감을 위해 index를 제외한다.
+    context = VaultSchemaService(note_repository=VaultNoteRepository(root=vault_root)).wiki_context(
+        include_index=False
+    )
+
+    # Then: 빈 index 문자열 때문에 unindexed backlog를 만들지 않는다.
+    assert "unindexed_page" not in {issue.code for issue in context.issue_candidates}
+    assert "add_index_entry" not in {suggestion.action for suggestion in context.update_suggestions}
+
+
+def test_wiki_context_requires_real_index_link_or_path_match(tmp_path: Path) -> None:
+    # Given: page stem이 index.md의 일반 단어 일부로만 등장한다.
+    vault_root = tmp_path / "vault"
+    _write_schema(vault_root)
+    (vault_root / "index.md").write_text(
+        (
+            "# Wiki Index\n\n"
+            "This daily chain mentions ai as plain text only.\n"
+            "Also mentions concepts/aiology but not the actual AI page.\n"
+        ),
+        encoding="utf-8",
+    )
+    _write_raw_note(vault_root / "raw" / "articles" / "source.md", "Source body\n")
+    _write_synthesized_note(
+        vault_root / "concepts" / "ai.md",
+        title="AI",
+        page_type="concept",
+        tags=["agent-memory"],
+        sources=["raw/articles/source.md"],
+        body="# AI\n\nNo explicit index entry.\n",
+    )
+
+    # When: wiki context를 만든다.
+    context = VaultSchemaService(
+        note_repository=VaultNoteRepository(root=vault_root)
+    ).wiki_context()
+
+    # Then: 임의 substring이 아니라 실제 path/link가 있어야 indexed로 본다.
+    page = next(page for page in context.wiki_map.pages if page.path == "concepts/ai.md")
+    assert page.indexed is False
+    assert "unindexed_page" in {issue.code for issue in context.issue_candidates}
+
+
+def test_wiki_context_treats_title_wikilink_in_index_as_indexed(tmp_path: Path) -> None:
+    # Given: index.md가 file path 대신 Obsidian title wikilink로 page를 나열한다.
+    vault_root = tmp_path / "vault"
+    _write_schema(vault_root)
+    (vault_root / "index.md").write_text(
+        "# Wiki Index\n\n## Concepts\n- [[Agent Memory]]\n",
+        encoding="utf-8",
+    )
+    _write_raw_note(vault_root / "raw" / "articles" / "source.md", "Source body\n")
+    _write_synthesized_note(
+        vault_root / "concepts" / "agent-memory.md",
+        title="Agent Memory",
+        page_type="concept",
+        tags=["agent-memory"],
+        sources=["raw/articles/source.md"],
+        body="# Agent Memory\n\nTitle link in index.\n",
+    )
+
+    # When: wiki context를 만든다.
+    context = VaultSchemaService(
+        note_repository=VaultNoteRepository(root=vault_root)
+    ).wiki_context()
+
+    # Then: title wikilink가 단일 page로 해석되면 indexed로 본다.
+    page = next(page for page in context.wiki_map.pages if page.path == "concepts/agent-memory.md")
+    assert page.indexed is True
+    assert "unindexed_page" not in {issue.code for issue in context.issue_candidates}
+
+
+def test_wiki_context_does_not_index_ambiguous_title_wikilink(
+    tmp_path: Path,
+) -> None:
+    # Given: 같은 title을 가진 page가 둘 있고 index.md는 title만 링크한다.
+    vault_root = tmp_path / "vault"
+    _write_schema(vault_root)
+    (vault_root / "index.md").write_text("- [[Agent Memory]]\n", encoding="utf-8")
+    _write_raw_note(vault_root / "raw" / "articles" / "source.md", "Source body\n")
+    _write_synthesized_note(
+        vault_root / "concepts" / "agent-memory.md",
+        title="Agent Memory",
+        page_type="concept",
+        tags=["agent-memory"],
+        sources=["raw/articles/source.md"],
+        body="# Agent Memory\n",
+    )
+    _write_synthesized_note(
+        vault_root / "concepts" / "agent-memory-alt.md",
+        title="Agent Memory",
+        page_type="concept",
+        tags=["agent-memory"],
+        sources=["raw/articles/source.md"],
+        body="# Agent Memory\n",
+    )
+
+    # When: wiki context를 만든다.
+    context = VaultSchemaService(
+        note_repository=VaultNoteRepository(root=vault_root)
+    ).wiki_context()
+
+    # Then: title이 여러 page에 매칭되면 특정 page가 indexed라고 단정하지 않는다.
+    pages = {page.path: page for page in context.wiki_map.pages}
+    assert pages["concepts/agent-memory.md"].indexed is False
+    assert pages["concepts/agent-memory-alt.md"].indexed is False
+
+
+def test_wiki_context_surfaces_map_link_issues_and_update_suggestions(
+    tmp_path: Path,
+) -> None:
+    # Given: 연결이 일부 끊긴 synthesized page들과 미반영 raw source가 있는 vault가 있다.
+    vault_root = tmp_path / "vault"
+    _write_schema(vault_root)
+    (vault_root / "index.md").write_text(
+        "# Wiki Index\n\n## Concepts\n- [[agent-memory]] - Agent memory overview\n",
+        encoding="utf-8",
+    )
+    (vault_root / "log.md").write_text("# Wiki Log\n", encoding="utf-8")
+    _write_raw_note(vault_root / "raw" / "articles" / "karpathy.md", "Karpathy body\n")
+    _write_raw_note(vault_root / "raw" / "articles" / "unused.md", "Unused raw body\n")
+    _write_synthesized_note(
+        vault_root / "concepts" / "agent-memory.md",
+        title="Agent Memory",
+        page_type="concept",
+        tags=["agent-memory"],
+        sources=["raw/articles/karpathy.md"],
+        body="# Agent Memory\n\nConnects to [[hermes-agent]] and [[missing-page]].\n",
+    )
+    _write_synthesized_note(
+        vault_root / "entities" / "hermes-agent.md",
+        title="Hermes Agent",
+        page_type="entity",
+        tags=["mcp"],
+        sources=["raw/articles/karpathy.md"],
+        body="# Hermes Agent\n\nNo backlink yet.\n",
+    )
+    _write_synthesized_note(
+        vault_root / "concepts" / "orphan-topic.md",
+        title="Orphan Topic",
+        page_type="concept",
+        tags=["verification"],
+        sources=["raw/articles/karpathy.md"],
+        body="# Orphan Topic\n\nNo cross-links yet.\n",
+    )
+
+    # When: MCP context-first workflow용 context를 만든다.
+    context = VaultSchemaService(
+        note_repository=VaultNoteRepository(root=vault_root)
+    ).wiki_context()
+
+    # Then: LLM은 현재 page map, link/consistency issue 후보, 업데이트 제안을 함께 받는다.
+    assert context.wiki_map.pages_by_type == {
+        "concept": ["concepts/agent-memory.md", "concepts/orphan-topic.md"],
+        "entity": ["entities/hermes-agent.md"],
+    }
+    assert context.wiki_map.raw_sources == [
+        "raw/articles/karpathy.md",
+        "raw/articles/unused.md",
+    ]
+    pages = {page.path: page for page in context.wiki_map.pages}
+    assert pages["concepts/agent-memory.md"].outbound_links == ["entities/hermes-agent.md"]
+    assert pages["entities/hermes-agent.md"].inbound_links == ["concepts/agent-memory.md"]
+    assert [entity.path for entity in context.entities] == ["entities/hermes-agent.md"]
+    assert context.entities[0].title == "Hermes Agent"
+    assert context.entities[0].inbound_links == ["concepts/agent-memory.md"]
+    issue_codes = {issue.code for issue in context.issue_candidates}
+    assert {
+        "broken_wikilink",
+        "missing_backlink",
+        "orphan_page",
+        "underlinked_page",
+        "unindexed_page",
+        "raw_source_without_synthesis",
+    }.issubset(issue_codes)
+    suggestions = {
+        (suggestion.action, suggestion.path) for suggestion in context.update_suggestions
+    }
+    assert ("repair_wikilink", "concepts/agent-memory.md") in suggestions
+    assert ("add_backlink", "entities/hermes-agent.md") in suggestions
+    assert ("connect_or_archive_page", "concepts/orphan-topic.md") in suggestions
+    assert ("add_index_entry", "entities/hermes-agent.md") in suggestions
+    assert ("synthesize_or_link_raw_source", "raw/articles/unused.md") in suggestions
+
+
+def test_wiki_context_resolves_wikilinks_by_page_title(tmp_path: Path) -> None:
+    # Given: 다른 note가 path stem이 아닌 frontmatter title로 wikilink를 건다.
+    vault_root = tmp_path / "vault"
+    _write_schema(vault_root)
+    (vault_root / "index.md").write_text("# Wiki Index\n", encoding="utf-8")
+    _write_raw_note(vault_root / "raw" / "articles" / "source.md", "Source body\n")
+    _write_synthesized_note(
+        vault_root / "concepts" / "agent-memory.md",
+        title="Agent Memory",
+        page_type="concept",
+        tags=["agent-memory"],
+        sources=["raw/articles/source.md"],
+        body="# Agent Memory\n\nTarget page.\n",
+    )
+    _write_synthesized_note(
+        vault_root / "concepts" / "working-memory.md",
+        title="Working Memory",
+        page_type="concept",
+        tags=["agent-memory"],
+        sources=["raw/articles/source.md"],
+        body="# Working Memory\n\nLinks to [[Agent Memory]].\n",
+    )
+
+    # When: wiki context를 만든다.
+    context = VaultSchemaService(
+        note_repository=VaultNoteRepository(root=vault_root)
+    ).wiki_context()
+
+    # Then: title-based Obsidian link를 broken link로 보고하지 않는다.
+    pages = {page.path: page for page in context.wiki_map.pages}
+    assert pages["concepts/working-memory.md"].outbound_links == ["concepts/agent-memory.md"]
+    assert "broken_wikilink" not in {issue.code for issue in context.issue_candidates}
+
+
+def test_wiki_context_ignores_obsidian_embeds_for_wikilink_repair(tmp_path: Path) -> None:
+    # Given: synthesized page가 raw/assets attachment를 Obsidian embed로 포함한다.
+    vault_root = tmp_path / "vault"
+    _write_schema(vault_root)
+    (vault_root / "index.md").write_text("- [[agent-memory]]\n", encoding="utf-8")
+    _write_raw_note(vault_root / "raw" / "articles" / "source.md", "Source body\n")
+    _write_synthesized_note(
+        vault_root / "concepts" / "agent-memory.md",
+        title="Agent Memory",
+        page_type="concept",
+        tags=["agent-memory"],
+        sources=["raw/articles/source.md"],
+        body="# Agent Memory\n\n![[raw/assets/chart.png]]\n",
+    )
+
+    # When: wiki context를 만든다.
+    context = VaultSchemaService(
+        note_repository=VaultNoteRepository(root=vault_root)
+    ).wiki_context()
+
+    # Then: embed 대상은 page wikilink repair 대상으로 보고하지 않는다.
+    assert not any(
+        issue.code == "broken_wikilink" and issue.related_paths == ["raw/assets/chart.png"]
+        for issue in context.issue_candidates
+    )
+    assert not any(
+        suggestion.action == "repair_wikilink"
+        and suggestion.related_paths == ["raw/assets/chart.png"]
+        for suggestion in context.update_suggestions
+    )
+
+
+def test_wiki_context_counts_raw_source_url_as_referenced(tmp_path: Path) -> None:
+    # Given: synthesized page가 raw path 대신 source URL을 sources에 사용한다.
+    vault_root = tmp_path / "vault"
+    _write_schema(vault_root)
+    raw_body = "Source body\n"
+    raw_path = vault_root / "raw" / "articles" / "source.md"
+    raw_path.parent.mkdir(parents=True, exist_ok=True)
+    raw_path.write_text(
+        f"""---
+source_url: https://example.com/source
+ingested: 2026-06-10
+sha256: {compute_sha256(raw_body)}
+---
+{raw_body}""",
+        encoding="utf-8",
+    )
+    _write_synthesized_note(
+        vault_root / "concepts" / "agent-memory.md",
+        title="Agent Memory",
+        page_type="concept",
+        tags=["agent-memory"],
+        sources=["https://example.com/source"],
+        body="# Agent Memory\n\nURL backed source.\n",
+    )
+
+    # When: wiki context를 만든다.
+    context = VaultSchemaService(note_repository=VaultNoteRepository(root=vault_root)).wiki_context(
+        include_index=False
+    )
+
+    # Then: URL이 raw source metadata와 일치하면 미사용 raw source로 보지 않는다.
+    assert not any(
+        issue.code == "raw_source_without_synthesis" and issue.path == "raw/articles/source.md"
+        for issue in context.issue_candidates
+    )
