@@ -14,9 +14,13 @@ MCP server for a Git-backed Obsidian/Markdown LLM Wiki vault.
 - `if_hash` optimistic concurrency for updates
 - Batch writes with `atomic=True` file rollback
 - Source hash, content hash, and optional git commit hash in write results
-- Provenance trailer on written notes
+- Provenance trailer on synthesized/meta written notes
 - REST metrics endpoint at `GET /metrics` combining vault and graph counters
 - LLM Wiki Markdown search through the `kb_search_notes` MCP tool
+- Schema-first wiki map, link issue candidates, and update suggestions through `kb_wiki_context`
+- Vault schema validation through `kb_validate_vault`
+- Deterministic tag taxonomy reconciliation through `kb_reconcile_taxonomy`
+- Schema-enforced writes through `kb_write_note`, including raw note metadata and body-only sha256 checks
 
 ## Local setup
 
@@ -239,12 +243,14 @@ The skill tells agents to:
 - Orient on `SCHEMA.md`, `index.md`, and `log.md` with direct file access or `kb_search_notes` snippets.
 - Apply the skill's built-in schema, page-type, index, log, and provenance guidance when a new vault does not have `SCHEMA.md` yet.
 - Treat `kb_search_notes` as snippets, not full file reads. Agents should not update existing notes in MCP-only mode unless they have the complete current note body.
-- Write complete Markdown notes through `kb_write_note`.
+- Write complete Markdown notes through `kb_write_note`; the server rejects schema violations before writing.
+- Start wiki work with `kb_wiki_context` so allowed tags, page types, index, recent log, and schema health are visible before drafting.
+- Use `kb_validate_vault` and `kb_reconcile_taxonomy` for deterministic schema hygiene and tag taxonomy repair.
 - Use returned `content_hash` as the next `if_hash` for optimistic concurrency.
 - Keep raw sources immutable and update `index.md` plus `log.md` for durable wiki changes.
 - Use the installed hook commands with native hooks, plugins, or wrappers: load compact wiki context at user-input time and run a stop-time update pass after the agent finishes. Claude Code and Codex are wired automatically by setup because they share the same `UserPromptSubmit`/`Stop` hook schema (in-loop `decision=block` re-prompt). Hermes/Hermess exposes only finalize-style session hooks, so it gets reusable scripts to wire into a plugin/wrapper or finalize hook for an out-of-loop update pass.
 
-Current MCP tools exposed by the server are `kb_write_note` and `kb_search_notes`. Vault/graph counters are exposed through the REST `GET /metrics` endpoint.
+Current MCP tools exposed by the server are `kb_write_note`, `kb_search_notes`, `kb_wiki_context`, `kb_validate_vault`, and `kb_reconcile_taxonomy`. Vault/graph counters are exposed through the REST `GET /metrics` endpoint.
 
 ## Validate
 

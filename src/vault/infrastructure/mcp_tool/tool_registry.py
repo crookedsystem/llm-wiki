@@ -11,6 +11,7 @@ from vault.dto.response.write_note_response import (
     write_note_response,
 )
 from vault.service.result.schema_validation_result import VaultValidationResult
+from vault.service.result.taxonomy_reconcile_result import TaxonomyReconcileResult
 from vault.service.result.wiki_context_result import WikiContext
 from vault.service.vault_schema_service import VaultSchemaService
 from vault.service.vault_search_service import VaultSearchService
@@ -82,3 +83,21 @@ def register_vault_tools(
     )
     def kb_validate_vault(include_raw: bool = True) -> VaultValidationResult:
         return schema_service.validate_vault(include_raw=include_raw)
+
+    @server.tool(
+        description=(
+            "Dry-run or apply deterministic tag taxonomy reconciliation. Use apply=false to "
+            "inspect unknown tag usage, then pass decisions with add/rename/remove to apply."
+        )
+    )
+    async def kb_reconcile_taxonomy(
+        apply: bool = False,
+        decisions: dict[str, object] | None = None,
+    ) -> TaxonomyReconcileResult:
+        if not apply:
+            return schema_service.reconcile_taxonomy(apply=apply, decisions=decisions)
+
+        async def operation() -> TaxonomyReconcileResult:
+            return schema_service.reconcile_taxonomy(apply=apply, decisions=decisions)
+
+        return await write_service.queue.run(operation)

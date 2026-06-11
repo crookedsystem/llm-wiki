@@ -932,3 +932,114 @@ Body that must not change.
     assert applied.changed_files == ["SCHEMA.md"]
     assert "agent-harness" in (vault_root / "SCHEMA.md").read_text(encoding="utf-8")
     assert schema_service.validate_vault().summary.unknown_tags == 0
+
+
+def test_reconcile_taxonomy_recomputes_unknown_tags_after_rename_apply(
+    tmp_path: Path,
+) -> None:
+    # Given: page가 SCHEMA.md에 없는 tag를 사용 중이고 rename 대상은 schema에 있다.
+    vault_root = tmp_path / "vault"
+    _write_schema(vault_root)
+    page_path = vault_root / "concepts" / "agent-harness.md"
+    _write_synthesized_note(
+        page_path,
+        title="Agent Harness",
+        page_type="concept",
+        tags=["agent-harness"],
+        sources=["raw/hermes/source.md"],
+        body="# Agent Harness\n",
+    )
+    schema_service = VaultSchemaService(note_repository=VaultNoteRepository(root=vault_root))
+
+    # When: unknown tag를 schema에 이미 있는 tag로 rename apply한다.
+    applied = schema_service.reconcile_taxonomy(
+        apply=True,
+        decisions={"rename": {"agent-harness": "agent-memory"}},
+    )
+
+    # Then: apply 이전 tag_usage 때문에 이전 tag를 unresolved로 남기지 않는다.
+    assert applied.unknown_tags == []
+    assert applied.tag_usage_counts == {"agent-memory": 1}
+    assert schema_service.validate_vault().summary.unknown_tags == 0
+
+
+def test_reconcile_taxonomy_does_not_treat_invalid_add_tags_as_allowed(
+    tmp_path: Path,
+) -> None:
+    # Given: page가 TAG_PATTERN에 맞지 않는 tag를 사용 중이다.
+    vault_root = tmp_path / "vault"
+    _write_schema(vault_root)
+    _write_synthesized_note(
+        vault_root / "concepts" / "agent-review.md",
+        title="Agent Review",
+        page_type="concept",
+        tags=["needs review"],
+        sources=["raw/hermes/source.md"],
+        body="# Agent Review\n",
+    )
+    schema_service = VaultSchemaService(note_repository=VaultNoteRepository(root=vault_root))
+
+    # When: invalid tag를 add decision으로 전달한다.
+    applied = schema_service.reconcile_taxonomy(
+        apply=True,
+        decisions={"add": ["needs review"]},
+    )
+
+    # Then: schema에 실제로 추가되지 않는 tag를 resolved로 취급하지 않는다.
+    assert applied.unknown_tags == ["needs review"]
+    assert applied.changed_files == []
+    assert "needs review" not in (vault_root / "SCHEMA.md").read_text(encoding="utf-8")
+
+
+def test_reconcile_taxonomy_does_not_add_unused_rename_target(
+    tmp_path: Path,
+) -> None:
+    # Given: rename old tag가 어떤 page에서도 사용되지 않는다.
+    vault_root = tmp_path / "vault"
+    _write_schema(vault_root)
+    _write_synthesized_note(
+        vault_root / "concepts" / "agent-memory.md",
+        title="Agent Memory",
+        page_type="concept",
+        tags=["agent-memory"],
+        sources=["raw/hermes/source.md"],
+        body="# Agent Memory\n",
+    )
+    schema_service = VaultSchemaService(note_repository=VaultNoteRepository(root=vault_root))
+
+    # When: 사용되지 않는 old tag에 대한 rename decision을 apply한다.
+    applied = schema_service.reconcile_taxonomy(
+        apply=True,
+        decisions={"rename": {"typo-old": "unused-target"}},
+    )
+
+    # Then: note rewrite가 없는 rename target을 taxonomy에 추가하지 않는다.
+    assert applied.changed_files == []
+    assert "unused-target" not in (vault_root / "SCHEMA.md").read_text(encoding="utf-8")
+
+
+def test_reconcile_taxonomy_apply_does_not_crash_when_schema_is_missing(
+    tmp_path: Path,
+) -> None:
+    # Given: SCHEMA.md 없이 synthesized page만 있는 vault가 있다.
+    vault_root = tmp_path / "vault"
+    _write_synthesized_note(
+        vault_root / "concepts" / "agent-memory.md",
+        title="Agent Memory",
+        page_type="concept",
+        tags=["agent-memory"],
+        sources=["raw/hermes/source.md"],
+        body="# Agent Memory\n",
+    )
+    schema_service = VaultSchemaService(note_repository=VaultNoteRepository(root=vault_root))
+
+    # When: missing schema 상태에서 add decision을 apply한다.
+    applied = schema_service.reconcile_taxonomy(
+        apply=True,
+        decisions={"add": ["agent-memory"]},
+    )
+
+    # Then: 임의 SCHEMA.md를 생성하지 않고 미해결 tag를 응답으로 유지한다.
+    assert applied.changed_files == []
+    assert applied.unknown_tags == ["agent-memory"]
+    assert not (vault_root / "SCHEMA.md").exists()

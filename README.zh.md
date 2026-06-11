@@ -14,9 +14,13 @@
 - 用于更新的 `if_hash` optimistic concurrency
 - `atomic=True` batch write 的文件 rollback
 - write 结果中的 source hash、content hash，以及可选的 git commit hash
-- 写入 note 的 provenance trailer
+- 写入 synthesized/meta note 的 provenance trailer
 - 通过 `GET /metrics` REST endpoint 合并提供 vault 与 graph counters
 - 通过 `kb_search_notes` MCP tool 搜索 LLM Wiki Markdown
+- 通过 `kb_wiki_context` 提供 schema-first wiki map、link issue candidates 和 update suggestions
+- 通过 `kb_validate_vault` 验证 vault schema
+- 通过 `kb_reconcile_taxonomy` 进行 deterministic tag taxonomy reconciliation
+- 通过 `kb_write_note` 执行 schema-enforced write，包括 raw note metadata 与 body-only sha256 check
 
 ## 本地设置
 
@@ -239,12 +243,14 @@ Claude 还支持 `--scope local|user|project`。Codex 还支持 `--config /path/
 - 通过直接文件访问或 `kb_search_notes` snippet，基于 `SCHEMA.md`、`index.md` 和 `log.md` 进行 orientation。
 - 当新 vault 还没有 `SCHEMA.md` 时，使用 skill 内置的 schema、page type、index、log 和 provenance 指南进行初始化。
 - 将 `kb_search_notes` 视为 snippet 搜索，而不是完整文件读取；在 MCP-only mode 下，如果没有完整的当前 note body，不要更新已有 note。
-- 通过 `kb_write_note` 写入完整 Markdown note。
+- 通过 `kb_write_note` 写入完整 Markdown note；服务器会在写入前拒绝 schema violation。
+- 以 `kb_wiki_context` 开始 wiki 工作，在 drafting 前查看 allowed tags、page types、index、recent log 与 schema health。
+- 使用 `kb_validate_vault` 和 `kb_reconcile_taxonomy` 处理 deterministic schema hygiene 与 tag taxonomy repair。
 - 使用返回的 `content_hash` 作为下一次 optimistic concurrency 的 `if_hash`。
 - 保持 raw source immutable，并在 durable wiki 变更时更新 `index.md` 与 `log.md`。
 - 使用已安装的 hook command，并通过 native hook、plugin 或 wrapper 接入：用户输入时加载 compact wiki context，agent 结束时运行 stop-time update pass。Claude Code 和 Codex 共享同一套 `UserPromptSubmit`/`Stop` hook schema（in-loop `decision=block` 再提示），因此由 setup 自动接好；Hermes/Hermess 只提供 finalize 类 session hook，因此 setup 会安装 reusable script，供你接入 plugin/wrapper 或 finalize hook 来运行 out-of-loop update pass。
 
-当前服务器暴露的 MCP tool 是 `kb_write_note` 和 `kb_search_notes`。Vault/graph counters 通过 REST `GET /metrics` endpoint 暴露。
+当前服务器暴露的 MCP tool 是 `kb_write_note`、`kb_search_notes`、`kb_wiki_context`、`kb_validate_vault` 和 `kb_reconcile_taxonomy`。Vault/graph counters 通过 REST `GET /metrics` endpoint 暴露。
 
 ## 验证
 

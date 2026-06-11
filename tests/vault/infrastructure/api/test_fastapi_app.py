@@ -78,10 +78,12 @@ def test_fastapi_app은_tools_endpoint에서_mcp_tool_schema를_문서화한다(
     search_notes = next(tool for tool in tools if tool["name"] == "kb_search_notes")
     wiki_context = next(tool for tool in tools if tool["name"] == "kb_wiki_context")
     validate_vault = next(tool for tool in tools if tool["name"] == "kb_validate_vault")
+    reconcile_taxonomy = next(tool for tool in tools if tool["name"] == "kb_reconcile_taxonomy")
     assert "complete Markdown note" in write_note["description"]
     assert "Search Markdown notes" in search_notes["description"]
     assert "context bundle" in wiki_context["description"]
     assert "Validate the configured LLM Wiki vault" in validate_vault["description"]
+    assert "taxonomy reconciliation" in reconcile_taxonomy["description"]
     assert write_note["inputSchema"]["type"] == "object"
     assert write_note["inputSchema"]["required"] == ["note_path", "content"]
     assert write_note["inputSchema"]["properties"]["note_path"]["type"] == "string"
@@ -94,6 +96,7 @@ def test_fastapi_app은_tools_endpoint에서_mcp_tool_schema를_문서화한다(
         "kb_search_notes",
         "kb_wiki_context",
         "kb_validate_vault",
+        "kb_reconcile_taxonomy",
     }
 
 

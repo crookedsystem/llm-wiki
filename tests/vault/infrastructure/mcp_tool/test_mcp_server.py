@@ -136,6 +136,7 @@ Related to [[concepts/agent-memory]].
             "kb_search_notes",
             "kb_wiki_context",
             "kb_validate_vault",
+            "kb_reconcile_taxonomy",
         }
         assert "complete Markdown note" in (tool_by_name["kb_write_note"].description or "")
         assert "Search Markdown notes" in (tool_by_name["kb_search_notes"].description or "")
@@ -158,5 +159,84 @@ Related to [[concepts/agent-memory]].
         assert "issue_candidates" in structured_context
         assert "update_suggestions" in structured_context
         assert cast(dict[str, Any], structured_validation["summary"])["issue_count"] == 0
+
+    asyncio.run(exercise_server())
+
+
+def test_mcp_reconcile_taxonomy_apply는_write_queue를_통해_직렬화된다(
+    tmp_path: Path,
+) -> None:
+    async def exercise_server() -> None:
+        # Given: unknown tag가 있는 vault와 write queue lock을 잡고 있는 작업이 있다.
+        vault_root = tmp_path / "vault"
+        settings = Settings(host="127.0.0.1", vault_path=vault_root)
+        runtime = create_runtime(settings)
+        server = create_mcp_server(
+            settings,
+            runtime.write_service,
+            runtime.search_service,
+            runtime.schema_service,
+        )
+        await server.call_tool(
+            "kb_write_note",
+            {
+                "note_path": "SCHEMA.md",
+                "content": """# Wiki Schema
+
+## Frontmatter
+Required fields: `title`, `created`, `updated`, `type`, `tags`, `sources`,
+`confidence`, `contested`.
+Allowed `type` values: `entity`, `concept`, `comparison`, `query`, `summary`.
+
+## Tag taxonomy
+- Knowledge: agent-memory
+""",
+            },
+        )
+        page_path = vault_root / "concepts" / "agent-harness.md"
+        page_path.parent.mkdir(parents=True, exist_ok=True)
+        page_path.write_text(
+            """---
+title: Agent Harness
+created: 2026-06-10
+updated: 2026-06-10
+type: concept
+tags: [agent-harness]
+sources: [raw/hermes/source.md]
+confidence: medium
+contested: false
+---
+
+# Agent Harness
+""",
+            encoding="utf-8",
+        )
+        release_queue = asyncio.Event()
+        queue_entered = asyncio.Event()
+
+        async def blocked_write() -> None:
+            queue_entered.set()
+            await release_queue.wait()
+
+        blocking_task = asyncio.create_task(runtime.write_queue.run(blocked_write))
+        await queue_entered.wait()
+
+        # When: apply=true taxonomy reconciliation을 호출한다.
+        reconcile_task = asyncio.create_task(
+            server.call_tool(
+                "kb_reconcile_taxonomy",
+                {"apply": True, "decisions": {"add": ["agent-harness"]}},
+            )
+        )
+        await asyncio.sleep(0)
+
+        # Then: 같은 write queue lock이 풀리기 전에는 mutate tool이 완료되지 않는다.
+        assert reconcile_task.done() is False
+
+        release_queue.set()
+        await blocking_task
+        _, result = await reconcile_task
+        structured_result = cast(dict[str, Any], result)
+        assert structured_result["changed_files"] == ["SCHEMA.md"]
 
     asyncio.run(exercise_server())
