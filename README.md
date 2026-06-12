@@ -12,36 +12,31 @@ MCP server for a Git-backed Obsidian/Markdown LLM Wiki vault.
 - Safe Markdown note path resolution inside the configured vault
 - Serialized writes through one `WriteQueue`
 - `if_hash` optimistic concurrency for updates
-- Batch writes with `atomic=True` file rollback
+- File rollback for `atomic=True` batch writes
 - Source hash, content hash, and optional git commit hash in write results
 - Provenance trailer on written notes
-- REST metrics endpoint at `GET /metrics` combining vault and graph counters
+- REST `GET /metrics` endpoint combining vault and graph counters
 - LLM Wiki Markdown search through the `kb_search_notes` MCP tool
 
-## Local setup
+## How to Start
+
+### Configure `.env`
 
 ```bash
 uv sync --extra dev
 cp .env.example .env
 ```
 
-Edit `.env`, especially `KB_VAULT_PATH`.
+In `.env`, set at least the vault path and the MCP server address.
 
-### Configure the LLM Wiki vault
-
-Think of `llm-wiki` as two different folders.
-
-The `llm-wiki` repository is the program code:
-
-```text
-/home/alice/projects/llm-wiki/
-├── src/        # server code
-├── tests/
-├── scripts/
-└── ...
+```env
+KB_VAULT_PATH=/home/alice/Obsidian/LLM Wiki
+KB_HOST=127.0.0.1
+KB_PORT=9999
+KB_MCP_PATH=/mcp
 ```
 
-`KB_VAULT_PATH` is the Markdown vault that stores knowledge:
+`KB_VAULT_PATH` is the vault root that holds your actual Markdown knowledge documents. It must point at the folder that contains `SCHEMA.md`, `index.md`, and `log.md` — not at `llm-wiki/src` or an Obsidian `.obsidian/` settings folder.
 
 ```text
 /home/alice/Obsidian/LLM Wiki/
@@ -55,202 +50,108 @@ The `llm-wiki` repository is the program code:
 └── queries/
 ```
 
-Set `.env` so `KB_VAULT_PATH` points at the second folder:
+The networking rule is simple. If you only use it from the same machine, keep `KB_HOST=127.0.0.1`. If a remote agent needs to connect, run the server with `KB_HOST=0.0.0.0` or a reachable bind IP, and in the agent config specify the real connection URL via `LLM_WIKI_MCP_URL=http://<server-ip-or-domain>:9999/mcp` or `--server-url`. `KB_HOST=0.0.0.0` is converted to `127.0.0.1` for same-machine client URLs, so a remote client needs the URL override.
 
-```env
-KB_VAULT_PATH=/home/alice/Obsidian/LLM Wiki
-KB_HOST=127.0.0.1
-KB_PORT=9999
-KB_MCP_PATH=/mcp
-```
+For Obsidian, no separate connector is needed — just **Open folder as vault** and open the same folder as `KB_VAULT_PATH`. The recommended settings are to set the attachment folder to `raw/assets/` and keep Wikilinks enabled.
 
-Do not set `KB_VAULT_PATH` to `llm-wiki/src` or to an Obsidian `.obsidian/` settings folder. It must point at the vault root that contains `SCHEMA.md`, `index.md`, and `log.md`.
-
-Most important:
-
-```text
-llm-wiki repository src/       = server code
-KB_VAULT_PATH raw/             = original/source material
-KB_VAULT_PATH entities/...     = synthesized wiki pages
-```
-
-Agents should read `SCHEMA.md`, `index.md`, and recent `log.md` before writing.
-
-### Connect Obsidian
-
-No separate connector is needed. In Obsidian, use **Open folder as vault** and open the same folder configured as `KB_VAULT_PATH`. Obsidian and the MCP server read and write the same Markdown files.
-
-Recommended: set Obsidian's attachment folder to `raw/assets/`, keep Wikilinks enabled, install Dataview if you need YAML frontmatter queries, and sync this same folder if you use Obsidian Sync.
-
-## Run
+### Start the MCP server
 
 ```bash
 uv run llm-wiki
 ```
 
-Hermes MCP config example:
+The default endpoint is `http://127.0.0.1:9999/mcp`. Once the server is up you can check its status with `GET /health`, and the MCP tools expose `kb_search_notes` and `kb_write_note`. Vault/graph counters are available through the REST `GET /metrics` endpoint.
 
-```yaml
-mcp_servers:
-  llm_wiki:
-    url: "http://127.0.0.1:9999/mcp"
+### Hook setup
+
+With the server running, run the setup entrypoint from another terminal.
+
+```bash
+uv run python scripts/main.py                 # Hermes/Hermess, Claude Code, Codex — all
+uv run python scripts/main.py --agent claude  # install a specific agent only
+uv run python scripts/main.py --agent codex --server-url http://127.0.0.1:9999/mcp
 ```
 
-## Agent integrations for LLM Wiki workflows
+`scripts/main.py` reads `.env` and shell export values to install the skill, MCP config, and hook commands. If the same server name or URL already exists, it does not overwrite the existing MCP config.
 
-This repository includes ready-to-copy MCP snippets, one canonical agent skill, and one uv-based setup entrypoint for using the server as an Obsidian/Markdown LLM Wiki bridge from Hermes/Hermess, Claude Code, and Codex.
+The URL resolution order is `--server-url` -> `LLM_WIKI_MCP_URL` -> `KB_HOST`/`KB_PORT`/`KB_MCP_PATH`. The server name is resolved in the order `--server-name` -> `LLM_WIKI_MCP_SERVER_NAME` -> agent default. To turn off hook installation, use `LLM_WIKI_INSTALL_HOOKS=false` or `--no-hooks`.
 
-The expected flow is:
+After setup, restart the agent session to reload the MCP tools, skill, and hook configuration.
 
-1. Copy `.env.example` to `.env` and set `KB_VAULT_PATH`, `KB_HOST`, `KB_PORT`, and `KB_MCP_PATH` for the server you will run.
-2. Run the MCP server with `uv run llm-wiki`.
-3. Run the setup entrypoint. By default it installs every supported agent; pass `--agent` to install a subset. It also installs LLM Wiki input/stop hook scaffolds so prompt-time context loading and stop-time wiki update passes use the same MCP server.
-4. Restart the agent session so MCP tools, skills, and any native hook/plugin configuration are reloaded.
+## How to Work
 
-### Files for agent integrations
+### How hooks work
 
-| Agent | MCP snippet | Skill source | Install command |
+Setup creates `llm-wiki-context-hook.sh` and `llm-wiki-stop-hook.sh` in each agent's hook directory, and for Claude Code and Codex it automatically merges them into the `UserPromptSubmit`/`Stop` hook configuration. For Hermes/Hermess it installs reusable scripts that you can wire into finalize-style hooks.
+
+The context hook calls `kb_search_notes` at user-input time and prepends relevant wiki snippets in front of the model. The stop hook requests an update pass right before completion, asking the model to record only wiki-worthy knowledge. Claude Code and Codex re-invoke the model once with `decision=block`, and they do not block again once `stop_hook_active=true`, avoiding a loop. If the hook helper or `uv` is missing, the hook exits quietly so it does not interfere with the agent run.
+
+### How agents use the skill
+
+The skill instructs the agent to:
+
+- Search existing Markdown wiki pages with `kb_search_notes` before writing
+- Orient on `SCHEMA.md`, `index.md`, and `log.md` via direct file access or `kb_search_notes` snippets
+- Initialize a new vault from the skill's built-in schema, page-type, index, log, and provenance guidance when it does not have `SCHEMA.md` yet
+- Treat `kb_search_notes` as snippet search rather than full file reads, so in MCP-only mode it does not update an existing note without the complete current note body
+- Write complete Markdown notes through `kb_write_note`
+- Use the returned `content_hash` as the next `if_hash` for optimistic concurrency
+- Keep raw sources immutable and update `index.md` and `log.md` for durable wiki changes
+- Use the installed hook commands together with native hooks, plugins, or wrappers: load compact wiki context at user-input time and run a stop-time update pass when the agent finishes. Claude Code and Codex share the same `UserPromptSubmit`/`Stop` hook schema (in-loop `decision=block` re-prompt), so setup wires them automatically. Hermes/Hermess exposes only finalize-style session hooks, so it gets reusable scripts to wire into a plugin/wrapper or finalize hook for an out-of-loop update pass.
+
+The MCP tools the server currently exposes are `kb_write_note` and `kb_search_notes`. Vault/graph counters are provided through the REST `GET /metrics` endpoint.
+
+## Vault Structure
+
+The vault that `KB_VAULT_PATH` points at is not just a bag of folders — it is a graph the write skill (`kb_write_note`) fills by consistent rules. This section describes what the write skill records in each folder and how the AI finds it again.
+
+### Folder Tree
+
+```text
+KB_VAULT_PATH/
+├── SCHEMA.md        # vault conventions, page thresholds, tag taxonomy
+├── index.md         # navigational catalog of synthesized pages
+├── log.md           # append-only audit trail of changes
+├── raw/             # immutable source material and assets (raw/assets/)
+├── entities/        # people, orgs, products, models, projects, standards, APIs
+├── concepts/        # ideas, techniques, mechanisms, topics, principles
+├── comparisons/     # side-by-side analyses and decision records
+└── queries/         # answered questions / research worth preserving
+```
+
+`raw/` is source material; `entities/`, `concepts/`, `comparisons/`, and `queries/` are synthesized wiki pages owned by the AI.
+
+### What gets written to each folder
+
+The write skill uses the frontmatter `type` value to decide which folder a page belongs to.
+
+| Folder | `type` | Records | Not for |
 | --- | --- | --- | --- |
-| Hermes/Hermess | `mcp/hermess.yaml` | `skills/llm-wiki/` | `uv run python scripts/main.py --agent hermes` |
-| Claude Code | `mcp/claude.json` | `skills/llm-wiki/` | `uv run python scripts/main.py --agent claude` |
-| Codex | `mcp/codex.toml` | `skills/llm-wiki/` | `uv run python scripts/main.py --agent codex` |
+| `entities/` | `entity` | People, companies, products, models, projects, protocols, datasets, standards, APIs | Broad ideas or techniques |
+| `concepts/` | `concept` | Techniques, principles, mechanisms, topics, terms, recurring patterns | Named orgs/products unless the page is about the abstract idea |
+| `comparisons/` | `comparison` | Tradeoff analysis, A-vs-B decisions, rankings, matrices, migration choices | A simple summary of one thing |
+| `queries/` | `query` | A substantial, well-answered question, investigation, or synthesis worth reusing | Trivial lookups or one-off chat answers |
+| `concepts/` or `queries/` | `summary` | Cross-cutting overviews and topic maps | Pages that can be classified more specifically |
 
-The setup entrypoint is `scripts/main.py`. Run it without `--agent` to install Hermes/Hermess, Claude Code, and Codex in one pass. The reusable code lives under `scripts/setup_support/`, so env loading, MCP URL resolution, skill copying, hook installation, duplicate detection, and Codex TOML editing use the same path for every agent. The runtime hook helper lives at `scripts/agent_hooks/llm_wiki_agent_hook.py`.
+Every synthesized page follows these rules:
 
-The skill is intentionally single-source: all agents install the same `skills/llm-wiki/SKILL.md`. Agent-specific differences live in setup code and in the skill's "Agent-specific MCP names" section.
+- **Frontmatter:** `title`, `created`, `updated`, `type`, `tags`, `sources` are required; `confidence` (high/medium/low) and `contested` (true/false) are optional.
+- **Body shape:** `# Title` followed by `## Summary`, `## Key facts`, `## Relationships`, `## Open questions`, `## Sources`.
+- **Paths:** lowercase kebab-case (`concepts/llm-wiki.md`, `entities/anthropic.md`).
+- **Links:** `[[wikilinks]]` between pages; new pages should have at least two useful outbound links when possible.
+- **Thresholds:** create a page only when an entity/concept appears in 2+ sources or is central to one important source; split pages over ~200 lines.
 
-### Setup entrypoint reads `.env`
+The write skill automatically appends a provenance trailer (`<!-- kb-provenance: ... -->`) after the body, and updates `index.md` (navigation) and `log.md` (audit trail) on every meaningful write. Sources under `raw/` stay immutable; corrections and synthesis go into the wiki pages.
 
-The setup entrypoint reads the repository `.env` by default and then lets already-exported shell variables override it. Pass `--env-file /path/to/file` to use another dotenv file.
+### How the AI explores it
 
-MCP URL resolution order:
+The AI treats the vault as a graph, not just a text-search index.
 
-1. `--server-url URL`
-2. `LLM_WIKI_MCP_URL`
-3. `LLM_WIKI_MCP_SCHEME` + `LLM_WIKI_MCP_HOST` or `KB_HOST` + `KB_PORT` + `KB_MCP_PATH`
+1. Start with `index.md` and recent `log.md` to understand the current map and latest changes.
+2. Search `kb_search_notes` with multiple terms: the user's wording, synonyms, entity names, and tags.
+3. Narrow with `path_prefix` (`entities`, `concepts`, `comparisons`, `queries`, `raw`).
+4. Follow `[[wikilinks]]` from relevant pages, reading linked pages when they may change the synthesis.
+5. Prefer pages with higher confidence, newer dates, and multiple sources; surface low-confidence or contested pages explicitly.
+6. When an answer becomes a reusable synthesis, file it as a `queries/` or `comparisons/` page and update `index.md` and `log.md`.
 
-If `KB_HOST=0.0.0.0`, setup converts it to `127.0.0.1` for local agent clients. The server may bind to all interfaces, but local agents should normally connect through loopback.
-
-MCP server name resolution order:
-
-1. `--server-name NAME`
-2. `LLM_WIKI_MCP_SERVER_NAME`
-3. Agent default: `llm_wiki` for Hermes/Codex, `llm-wiki` for Claude Code
-
-Hook setup is enabled by default. Set `LLM_WIKI_INSTALL_HOOKS=false` or pass `--no-hooks` to skip it. The generated hook scripts run the same helper in two modes:
-
-- user input: query `kb_search_notes` and print a compact `<llm-wiki-context>` block for the model;
-- stop/completion: ask the model to do one final MCP update pass, writing only durable facts/decisions/procedures and updating `index.md`/`log.md` when content changes.
-
-Hook locations are configurable with `HERMES_LLM_WIKI_HOOKS_DIR`, `CLAUDE_HOOKS_DIR`, `CLAUDE_SETTINGS_PATH`, `CODEX_LLM_WIKI_HOOKS_DIR`, and `CODEX_HOOKS_JSON_PATH`.
-
-### Existing MCP configs are not overwritten
-
-Setup adds a server only when it is missing:
-
-- Claude Code: checks `claude mcp get <name>` and `claude mcp list` before running `claude mcp add`.
-- Hermes/Hermess: checks `hermes mcp list` for the same name or URL before running `hermes mcp add`.
-- Codex: parses `${CODEX_CONFIG_PATH:-~/.codex/config.toml}` and skips when the same server name or URL already exists.
-
-If a matching server exists, setup prints why it skipped and leaves the existing MCP config unchanged.
-
-### Setup Hermes/Hermess
-
-```bash
-uv run python scripts/main.py --agent hermes
-```
-
-What it does:
-
-- Copies `skills/llm-wiki/` to `${HERMES_HOME:-~/.hermes}/skills/llm-wiki/`
-- Installs reusable hook commands under `${HERMES_LLM_WIKI_HOOKS_DIR:-${HERMES_HOME:-~/.hermes}/hooks/llm-wiki}/`
-- Adds `${LLM_WIKI_MCP_SERVER_NAME:-llm_wiki}` to Hermes MCP config only when missing
-- Runs `hermes mcp test <server-name>` when the CLI is available
-
-After setup, restart Hermes or use `/reload-mcp` in an existing session if available.
-
-### Setup Claude Code
-
-```bash
-uv run python scripts/main.py --agent claude
-```
-
-What it does:
-
-- Copies `skills/llm-wiki/` to `${CLAUDE_SKILLS_DIR:-~/.claude/skills}/llm-wiki/`
-- Installs `llm-wiki-context-hook.sh` and `llm-wiki-stop-hook.sh` under `${CLAUDE_HOOKS_DIR:-~/.claude/hooks/llm-wiki}/`
-- Merges Claude Code `UserPromptSubmit` and `Stop` hook entries into `${CLAUDE_SETTINGS_PATH:-~/.claude/settings.json}` without duplicating existing entries
-- Adds `${LLM_WIKI_MCP_SERVER_NAME:-llm-wiki}` with `claude mcp add -s ${CLAUDE_MCP_SCOPE:-user} --transport http ...` only when missing
-- Runs `claude mcp get <server-name>` when the CLI is available
-
-The Claude `UserPromptSubmit` hook prints wiki context before the model starts. The `Stop` hook emits a one-time block decision asking Claude to update LLM Wiki through MCP before it finishes; Claude sets `stop_hook_active=true` on the follow-up stop event, so the hook does not loop forever.
-
-Claude may ask you to approve project-scoped `.mcp.json` servers the first time you open a project.
-
-### Setup Codex
-
-```bash
-uv run python scripts/main.py --agent codex
-```
-
-What it does:
-
-- Copies `skills/llm-wiki/` to `${CODEX_SKILLS_DIR:-${CODEX_HOME:-~/.codex}/skills}/llm-wiki/`
-- Installs `llm-wiki-context-hook.sh` and `llm-wiki-stop-hook.sh` under `${CODEX_LLM_WIKI_HOOKS_DIR:-${CODEX_HOME:-~/.codex}/hooks/llm-wiki}/`
-- Merges Codex `UserPromptSubmit` and `Stop` hook entries into `${CODEX_HOOKS_JSON_PATH:-~/.codex/hooks.json}` without duplicating existing entries
-- Appends a new `[mcp_servers.<name>]` block to `${CODEX_CONFIG_PATH:-~/.codex/config.toml}` only when the same name or URL is absent
-
-Codex (2026+) shares Claude Code's hook JSON schema, so its `Stop` hook also emits a one-time `decision=block` asking the agent to update LLM Wiki before it finishes; the helper skips re-blocking once `stop_hook_active=true`, so the hook does not loop. Restart Codex after changing `config.toml`, `hooks.json`, or skill files.
-
-### Setup entrypoint options
-
-Install all supported agents:
-
-```bash
-uv run python scripts/main.py
-```
-
-Install selected agents by passing `--agent` one or more times:
-
-```bash
-uv run python scripts/main.py --agent claude
-uv run python scripts/main.py --agent claude --agent codex
-```
-
-The setup entrypoint supports:
-
-```bash
---agent {hermes,claude,codex}  # repeatable; omit to install all agents
---dry-run                 # print actions without writing files or changing agent config
---env-file PATH           # default: repository .env
---server-url URL          # override .env MCP URL resolution
---server-name NAME        # default: llm_wiki for Hermes/Codex, llm-wiki for Claude
---no-hooks                # skip input/stop hook scaffold installation
---claude-settings PATH    # Claude settings JSON to merge hooks into
-```
-
-Claude also supports `--scope local|user|project`. Codex also supports `--config /path/to/config.toml`.
-
-### How agents should use the skill
-
-The skill tells agents to:
-
-- Use `kb_search_notes` to search existing Markdown wiki pages before writing.
-- Orient on `SCHEMA.md`, `index.md`, and `log.md` with direct file access or `kb_search_notes` snippets.
-- Apply the skill's built-in schema, page-type, index, log, and provenance guidance when a new vault does not have `SCHEMA.md` yet.
-- Treat `kb_search_notes` as snippets, not full file reads. Agents should not update existing notes in MCP-only mode unless they have the complete current note body.
-- Write complete Markdown notes through `kb_write_note`.
-- Use returned `content_hash` as the next `if_hash` for optimistic concurrency.
-- Keep raw sources immutable and update `index.md` plus `log.md` for durable wiki changes.
-- Use the installed hook commands with native hooks, plugins, or wrappers: load compact wiki context at user-input time and run a stop-time update pass after the agent finishes. Claude Code and Codex are wired automatically by setup because they share the same `UserPromptSubmit`/`Stop` hook schema (in-loop `decision=block` re-prompt). Hermes/Hermess exposes only finalize-style session hooks, so it gets reusable scripts to wire into a plugin/wrapper or finalize hook for an out-of-loop update pass.
-
-Current MCP tools exposed by the server are `kb_write_note` and `kb_search_notes`. Vault/graph counters are exposed through the REST `GET /metrics` endpoint.
-
-## Validate
-
-```bash
-uv run ruff format --check .
-uv run ruff check .
-uv run mypy src tests
-uv run pytest --cov=src --cov-fail-under=80
-```
+Because `kb_search_notes` returns snippets rather than whole files, in MCP-only mode the AI does not overwrite an existing note without the complete current note body.
