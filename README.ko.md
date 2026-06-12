@@ -101,11 +101,57 @@ Skill은 agent에게 다음을 지시합니다:
 
 현재 서버가 노출하는 MCP tool은 `kb_write_note`, `kb_search_notes`입니다. Vault/graph counter는 REST `GET /metrics` endpoint로 제공합니다.
 
-## 검증
+## Vault Structure
 
-```bash
-uv run ruff format --check .
-uv run ruff check .
-uv run mypy src tests
-uv run pytest --cov=src --cov-fail-under=80
+`KB_VAULT_PATH`가 가리키는 vault는 단순한 폴더 묶음이 아니라, write skill(`kb_write_note`)이 일정한 규칙으로 채우는 그래프입니다. 아래는 write skill이 어떤 폴더에 무엇을 기록하고, AI가 그것을 어떻게 다시 찾는지 정리한 것입니다.
+
+### Folder Tree
+
+```text
+KB_VAULT_PATH/
+├── SCHEMA.md        # vault 규칙, 페이지 임계값, 태그 taxonomy
+├── index.md         # synthesized 페이지의 네비게이션 카탈로그
+├── log.md           # append-only 변경 감사 로그
+├── raw/             # 변경 불가한 원본 소스 자료와 첨부 (raw/assets/)
+├── entities/        # 사람, 조직, 제품, 모델, 프로젝트, 표준, API
+├── concepts/        # 아이디어, 기법, 메커니즘, 주제, 원칙
+├── comparisons/     # 나란히 비교한 분석과 의사결정 기록
+└── queries/         # 보존할 가치가 있는 답변된 질문 / 조사 결과
 ```
+
+`raw/`는 소스 자료이고, `entities/`·`concepts/`·`comparisons/`·`queries/`는 AI가 소유하는 synthesized wiki 페이지입니다.
+
+### 각 폴더에 작성되는 세부 내용
+
+write skill은 frontmatter의 `type` 값으로 페이지가 어느 폴더에 들어갈지 결정합니다.
+
+| 폴더 | `type` | 기록 내용 | 쓰지 않는 경우 |
+| --- | --- | --- | --- |
+| `entities/` | `entity` | 사람, 회사, 제품, 모델, 프로젝트, 프로토콜, 데이터셋, 표준, API | 넓은 아이디어나 기법 |
+| `concepts/` | `concept` | 기법, 원칙, 메커니즘, 주제, 용어, 반복되는 패턴 | 추상 개념이 아닌 한 명명된 조직/제품 |
+| `comparisons/` | `comparison` | 트레이드오프 분석, A-vs-B 의사결정, 랭킹, 매트릭스, 마이그레이션 선택 | 한 가지에 대한 단순 요약 |
+| `queries/` | `query` | 재사용할 만한, 충실히 답변된 질문·조사·합성 결과 | 사소한 조회나 일회성 채팅 답변 |
+| `concepts/` 또는 `queries/` | `summary` | 여러 주제를 가로지르는 개요·토픽 맵 | 더 구체적으로 분류 가능한 페이지 |
+
+모든 synthesized 페이지는 다음 규칙을 따릅니다:
+
+- **Frontmatter:** `title`, `created`, `updated`, `type`, `tags`, `sources`는 필수, `confidence`(high/medium/low)와 `contested`(true/false)는 선택.
+- **본문 형태:** `# 제목` 다음에 `## Summary`, `## Key facts`, `## Relationships`, `## Open questions`, `## Sources` 순서.
+- **경로:** 소문자 kebab-case (`concepts/llm-wiki.md`, `entities/anthropic.md`).
+- **링크:** 페이지 간에는 `[[wikilinks]]`, 새 페이지는 가능하면 outbound 링크 2개 이상.
+- **임계값:** entity/concept가 2개 이상 소스에 나오거나 중요한 한 소스의 중심일 때만 페이지 생성. 약 200줄을 넘으면 하위 페이지로 분할.
+
+write skill은 본문 뒤에 provenance trailer(`<!-- kb-provenance: ... -->`)를 자동으로 덧붙이고, 의미 있는 write마다 `index.md`(네비게이션)와 `log.md`(감사 로그)를 갱신합니다. `raw/`의 원본은 immutable로 유지하고, 수정·합성은 wiki 페이지 쪽에서 합니다.
+
+### AI가 이걸 탐색하는 방식
+
+AI는 vault를 텍스트 검색 인덱스가 아니라 그래프로 다룹니다.
+
+1. `index.md`와 최근 `log.md`로 현재 지도와 최근 변경을 먼저 파악합니다.
+2. `kb_search_notes`로 여러 용어(사용자 표현, 동의어, 엔티티 이름, 태그)를 검색합니다.
+3. `path_prefix`(`entities`, `concepts`, `comparisons`, `queries`, `raw`)로 검색 범위를 좁힙니다.
+4. 관련 페이지의 `[[wikilinks]]`를 따라가며, 합성에 영향을 줄 수 있으면 링크된 페이지까지 읽습니다.
+5. confidence가 높고, 날짜가 최신이며, 소스가 여러 개인 페이지를 우선하고, 낮은 confidence나 contested 페이지는 명시적으로 드러냅니다.
+6. 답이 재사용 가능한 합성이 되면 `queries/`나 `comparisons/` 페이지로 정리하고 `index.md`·`log.md`를 갱신합니다.
+
+`kb_search_notes`는 전체 파일이 아니라 snippet을 반환하므로, MCP-only mode에서는 완전한 현재 note body 없이 기존 note를 덮어쓰지 않습니다.

@@ -18,30 +18,25 @@
 - 通过 `GET /metrics` REST endpoint 合并提供 vault 与 graph counters
 - 通过 `kb_search_notes` MCP tool 搜索 LLM Wiki Markdown
 
-## 本地设置
+## How to Start
+
+### 配置 `.env`
 
 ```bash
 uv sync --extra dev
 cp .env.example .env
 ```
 
-编辑 `.env`，尤其是 `KB_VAULT_PATH`。
+在 `.env` 中，至少设置 vault 路径和 MCP 服务器地址。
 
-### 配置 LLM Wiki vault
-
-使用 `llm-wiki` 时，请把两个文件夹分开理解。
-
-`llm-wiki` repository 是程序代码所在的 Git repo：
-
-```text
-/home/alice/projects/llm-wiki/
-├── src/        # server code
-├── tests/
-├── scripts/
-└── ...
+```env
+KB_VAULT_PATH=/home/alice/Obsidian/LLM Wiki
+KB_HOST=127.0.0.1
+KB_PORT=9999
+KB_MCP_PATH=/mcp
 ```
 
-`KB_VAULT_PATH` 是真正存放知识文档的 Markdown vault：
+`KB_VAULT_PATH` 是真正存放 Markdown 知识文档的 vault root。它必须指向包含 `SCHEMA.md`、`index.md`、`log.md` 的文件夹，而不是 `llm-wiki/src` 或 Obsidian 的 `.obsidian/` 配置文件夹。
 
 ```text
 /home/alice/Obsidian/LLM Wiki/
@@ -55,202 +50,108 @@ cp .env.example .env
 └── queries/
 ```
 
-在 `.env` 中，把 `KB_VAULT_PATH` 指向第二个文件夹：
+网络规则很简单。如果只在同一台机器上使用，保持 `KB_HOST=127.0.0.1` 即可。如果需要远程 agent 连接，请用 `KB_HOST=0.0.0.0` 或可达的 bind IP 启动服务器，并在 agent 配置中通过 `LLM_WIKI_MCP_URL=http://<服务器IP或域名>:9999/mcp` 或 `--server-url` 指定真实的连接 URL。`KB_HOST=0.0.0.0` 在同一机器 client 的 URL 中会被转换为 `127.0.0.1`，因此 remote 端需要 URL override。
 
-```env
-KB_VAULT_PATH=/home/alice/Obsidian/LLM Wiki
-KB_HOST=127.0.0.1
-KB_PORT=9999
-KB_MCP_PATH=/mcp
-```
+Obsidian 不需要单独 connector，只需使用 **Open folder as vault** 打开与 `KB_VAULT_PATH` 相同的文件夹即可。建议把附件目录设为 `raw/assets/`，并保持 Wikilinks 启用。
 
-不要把 `KB_VAULT_PATH` 设置为 `llm-wiki/src`，也不要设置为 Obsidian 的 `.obsidian/` 配置文件夹。它必须指向包含 `SCHEMA.md`、`index.md` 和 `log.md` 的 vault root。
-
-最重要的区别是：
-
-```text
-llm-wiki repository 的 src/    = server code
-KB_VAULT_PATH 的 raw/          = original/source material
-KB_VAULT_PATH 的 entities/...  = synthesized wiki pages
-```
-
-Agent 在创建或更新文档之前，应先读取 `SCHEMA.md`、`index.md` 和最近的 `log.md`。
-
-### 连接 Obsidian
-
-不需要单独 connector。在 Obsidian 中使用 **Open folder as vault**，打开与 `KB_VAULT_PATH` 相同的文件夹即可。Obsidian 和 MCP server 读取、写入同一组 Markdown 文件。
-
-建议把附件目录设为 `raw/assets/`，保持 Wikilinks 启用；如果需要 YAML frontmatter 查询，安装 Dataview plugin。如果使用 Obsidian Sync，请同步同一个 vault 文件夹。
-
-## 运行
+### 启动 MCP 服务器
 
 ```bash
 uv run llm-wiki
 ```
 
-Hermes MCP 配置示例：
+默认 endpoint 是 `http://127.0.0.1:9999/mcp`。服务器启动后可通过 `GET /health` 查看状态，MCP tool 暴露 `kb_search_notes`、`kb_write_note`。Vault/graph counter 通过 REST `GET /metrics` 查看。
 
-```yaml
-mcp_servers:
-  llm_wiki:
-    url: "http://127.0.0.1:9999/mcp"
-```
+### Hook setup 方法
 
-## 用于 LLM Wiki workflow 的 agent integration
-
-本 repository 包含可直接复制的 MCP snippet、一个 canonical agent skill，以及基于 uv 的 setup entrypoint，用于让 Hermes/Hermess、Claude Code 和 Codex 将该服务器作为 Obsidian/Markdown LLM Wiki bridge 使用。
-
-预期 workflow 如下：
-
-1. 将 `.env.example` 复制为 `.env`，并为要运行的服务器设置 `KB_VAULT_PATH`、`KB_HOST`、`KB_PORT` 和 `KB_MCP_PATH`。
-2. 使用 `uv run llm-wiki` 运行 MCP 服务器。
-3. 运行 setup entrypoint。默认会安装所有支持的 agent；如只安装部分 agent，请传入 `--agent`。它也会安装 hook scaffold，让 user input 时的 context loading 与 stop-time wiki update pass 使用同一个 MCP server。
-4. 重启 agent session，使 MCP tool、skill 和 native hook/plugin 配置重新加载。
-
-### Agent integration 文件
-
-| Agent | MCP snippet | Skill source | Install command |
-| --- | --- | --- | --- |
-| Hermes/Hermess | `mcp/hermess.yaml` | `skills/llm-wiki/` | `uv run python scripts/main.py --agent hermes` |
-| Claude Code | `mcp/claude.json` | `skills/llm-wiki/` | `uv run python scripts/main.py --agent claude` |
-| Codex | `mcp/codex.toml` | `skills/llm-wiki/` | `uv run python scripts/main.py --agent codex` |
-
-Setup entrypoint 是 `scripts/main.py`。不传 `--agent` 运行时，会一次安装 Hermes/Hermess、Claude Code 和 Codex。可复用代码位于 `scripts/setup_support/`，因此 env 读取、MCP URL 解析、skill 复制、hook 安装、重复检查和 Codex TOML 编辑都走同一套代码。Runtime hook helper 位于 `scripts/agent_hooks/llm_wiki_agent_hook.py`。
-
-该 skill 有意保持 single-source：所有 agent 都安装同一个 `skills/llm-wiki/SKILL.md`。Agent-specific 差异只存在于 setup code，以及 skill 的 “Agent-specific MCP names” 部分。
-
-### Setup entrypoint 会读取 `.env`
-
-Setup entrypoint 默认读取 repository 的 `.env`，并允许已 export 的 shell 变量覆盖 `.env`。如果要使用其他 dotenv 文件，请传入 `--env-file /path/to/file`。
-
-MCP URL 解析顺序：
-
-1. `--server-url URL`
-2. `LLM_WIKI_MCP_URL`
-3. `LLM_WIKI_MCP_SCHEME` + `LLM_WIKI_MCP_HOST` 或 `KB_HOST` + `KB_PORT` + `KB_MCP_PATH`
-
-如果 `KB_HOST=0.0.0.0`，setup 会为本机 agent client 转换为 `127.0.0.1`。服务器可以绑定所有 interface，但同一机器上的 agent 通常应通过 loopback 连接。
-
-MCP server name 解析顺序：
-
-1. `--server-name NAME`
-2. `LLM_WIKI_MCP_SERVER_NAME`
-3. Agent 默认值：Hermes/Codex 为 `llm_wiki`，Claude Code 为 `llm-wiki`
-
-Hook setup 默认启用。若要禁用，请设置 `LLM_WIKI_INSTALL_HOOKS=false` 或传入 `--no-hooks`。生成的 hook script 使用同一个 helper 的两种 mode：
-
-- user input：查询 `kb_search_notes`，并输出给 model 的 compact `<llm-wiki-context>` block
-- stop/completion：要求 model 执行最后一次 MCP update pass，只写入 durable fact/decision/procedure，并在 content 变化时更新 `index.md`/`log.md`
-
-Hook 位置可通过 `HERMES_LLM_WIKI_HOOKS_DIR`、`CLAUDE_HOOKS_DIR`、`CLAUDE_SETTINGS_PATH`、`CODEX_LLM_WIKI_HOOKS_DIR`、`CODEX_HOOKS_JSON_PATH` 配置。
-
-### 不覆盖已有 MCP config
-
-Setup 只在 server 缺失时添加：
-
-- Claude Code：先检查 `claude mcp get <name>` 和 `claude mcp list`，再运行 `claude mcp add`。
-- Hermes/Hermess：先在 `hermes mcp list` 中检查相同 name 或 URL，再运行 `hermes mcp add`。
-- Codex：解析 `${CODEX_CONFIG_PATH:-~/.codex/config.toml}`，如果相同 server name 或 URL 已存在则跳过。
-
-如果找到匹配 server，setup 会打印跳过原因，并保持已有 MCP config 不变。
-
-### 设置 Hermes/Hermess
+在服务器开启的状态下，从另一个终端运行 setup entrypoint。
 
 ```bash
-uv run python scripts/main.py --agent hermes
+uv run python scripts/main.py                 # Hermes/Hermess、Claude Code、Codex 全部
+uv run python scripts/main.py --agent claude  # 只安装特定 agent
+uv run python scripts/main.py --agent codex --server-url http://127.0.0.1:9999/mcp
 ```
 
-它会执行：
+`scripts/main.py` 读取 `.env` 和 shell export 值，安装 skill、MCP config 和 hook command。如果相同 server name 或 URL 已存在，则不会覆盖已有的 MCP config。
 
-- 将 `skills/llm-wiki/` 复制到 `${HERMES_HOME:-~/.hermes}/skills/llm-wiki/`
-- 将 reusable hook command 安装到 `${HERMES_LLM_WIKI_HOOKS_DIR:-${HERMES_HOME:-~/.hermes}/hooks/llm-wiki}/`
-- 仅当 `${LLM_WIKI_MCP_SERVER_NAME:-llm_wiki}` 缺失时添加到 Hermes MCP config
-- CLI 可用时运行 `hermes mcp test <server-name>`
+URL 解析顺序为 `--server-url` -> `LLM_WIKI_MCP_URL` -> `KB_HOST`/`KB_PORT`/`KB_MCP_PATH`。Server name 按 `--server-name` -> `LLM_WIKI_MCP_SERVER_NAME` -> agent 默认值的顺序决定。若要关闭 hook 安装，使用 `LLM_WIKI_INSTALL_HOOKS=false` 或 `--no-hooks`。
 
-设置完成后，重启 Hermes；如果现有 session 支持，也可以使用 `/reload-mcp`。
+设置完成后，重启 agent session 以重新加载 MCP tool、skill 和 hook 配置。
 
-### 设置 Claude Code
+## How to Work
 
-```bash
-uv run python scripts/main.py --agent claude
-```
+### Hook 的工作原理
 
-它会执行：
+Setup 在各 agent 的 hook 目录中创建 `llm-wiki-context-hook.sh`、`llm-wiki-stop-hook.sh`，并为 Claude Code 和 Codex 自动合并到 `UserPromptSubmit`/`Stop` hook 配置中。对 Hermes/Hermess，它会安装可复用 script，便于接入 finalize 类 hook。
 
-- 将 `skills/llm-wiki/` 复制到 `${CLAUDE_SKILLS_DIR:-~/.claude/skills}/llm-wiki/`
-- 将 `llm-wiki-context-hook.sh` 和 `llm-wiki-stop-hook.sh` 安装到 `${CLAUDE_HOOKS_DIR:-~/.claude/hooks/llm-wiki}/`
-- 将 Claude Code `UserPromptSubmit` 与 `Stop` hook entry 合并到 `${CLAUDE_SETTINGS_PATH:-~/.claude/settings.json}`，且不重复添加
-- 仅当 `${LLM_WIKI_MCP_SERVER_NAME:-llm-wiki}` 缺失时，通过 `claude mcp add -s ${CLAUDE_MCP_SCOPE:-user} --transport http ...` 添加
-- CLI 可用时运行 `claude mcp get <server-name>`
+Context hook 在用户输入时调用 `kb_search_notes`，把相关 wiki snippet 附加到 model 前面。Stop hook 在结束前请求一次 update pass，要求 model 只判断并记录 wiki-worthy 的知识。Claude Code 和 Codex 通过一次 `decision=block` 重新调用 model，并在 `stop_hook_active=true` 时不再阻止，从而避免 loop。如果缺少 hook helper 或 `uv`，hook 会安静退出，不干扰 agent 运行。
 
-Claude `UserPromptSubmit` hook 会在 model 开始前输出 wiki context。`Stop` hook 会返回一次 block decision，要求 Claude 在结束前通过 MCP 更新 LLM Wiki；后续 stop event 的 `stop_hook_active=true` 不会再次 block，因此不会无限循环。
-
-第一次在项目中看到 project-scoped `.mcp.json` server 时，Claude 可能会要求你批准。
-
-### 设置 Codex
-
-```bash
-uv run python scripts/main.py --agent codex
-```
-
-它会执行：
-
-- 将 `skills/llm-wiki/` 复制到 `${CODEX_SKILLS_DIR:-${CODEX_HOME:-~/.codex}/skills}/llm-wiki/`
-- 将 `llm-wiki-context-hook.sh` 和 `llm-wiki-stop-hook.sh` 安装到 `${CODEX_LLM_WIKI_HOOKS_DIR:-${CODEX_HOME:-~/.codex}/hooks/llm-wiki}/`
-- 将 Codex `UserPromptSubmit`/`Stop` hook 条目合并到 `${CODEX_HOOKS_JSON_PATH:-~/.codex/hooks.json}`，不重复已有条目
-- 仅当相同 name 或 URL 不存在时，向 `${CODEX_CONFIG_PATH:-~/.codex/config.toml}` 追加新的 `[mcp_servers.<name>]` block
-
-Codex（2026+）与 Claude Code 共享同一套 hook JSON schema，因此其 `Stop` hook 也会 emit 一次性的 `decision=block`，要求 agent 在结束前更新 LLM Wiki；当 `stop_hook_active=true` 时 helper 会跳过再次 block，因此不会形成 loop。修改 `config.toml`、`hooks.json` 或 skill 文件后，请重启 Codex。
-
-### Setup entrypoint option
-
-安装所有支持的 agent：
-
-```bash
-uv run python scripts/main.py
-```
-
-只安装部分 agent 时，请传入一次或多次 `--agent`：
-
-```bash
-uv run python scripts/main.py --agent claude
-uv run python scripts/main.py --agent claude --agent codex
-```
-
-Setup entrypoint 支持：
-
-```bash
---agent {hermes,claude,codex}  # 可重复；省略则安装所有 agent
---dry-run                 # 只打印将执行的操作，不写文件或修改 agent config
---env-file PATH           # 默认值: repository .env
---server-url URL          # override .env MCP URL resolution
---server-name NAME        # 默认值: Hermes/Codex 为 llm_wiki，Claude 为 llm-wiki
---no-hooks                # 跳过 input/stop hook scaffold 安装
---claude-settings PATH    # 要合并 hook 的 Claude settings JSON
-```
-
-Claude 还支持 `--scope local|user|project`。Codex 还支持 `--config /path/to/config.toml`。
-
-### Agent 应如何使用该 skill
+### Agent 使用 skill 的方式
 
 该 skill 会指示 agent：
 
-- 写入前使用 `kb_search_notes` 搜索已有 Markdown wiki page。
-- 通过直接文件访问或 `kb_search_notes` snippet，基于 `SCHEMA.md`、`index.md` 和 `log.md` 进行 orientation。
-- 当新 vault 还没有 `SCHEMA.md` 时，使用 skill 内置的 schema、page type、index、log 和 provenance 指南进行初始化。
-- 将 `kb_search_notes` 视为 snippet 搜索，而不是完整文件读取；在 MCP-only mode 下，如果没有完整的当前 note body，不要更新已有 note。
-- 通过 `kb_write_note` 写入完整 Markdown note。
-- 使用返回的 `content_hash` 作为下一次 optimistic concurrency 的 `if_hash`。
-- 保持 raw source immutable，并在 durable wiki 变更时更新 `index.md` 与 `log.md`。
-- 使用已安装的 hook command，并通过 native hook、plugin 或 wrapper 接入：用户输入时加载 compact wiki context，agent 结束时运行 stop-time update pass。Claude Code 和 Codex 共享同一套 `UserPromptSubmit`/`Stop` hook schema（in-loop `decision=block` 再提示），因此由 setup 自动接好；Hermes/Hermess 只提供 finalize 类 session hook，因此 setup 会安装 reusable script，供你接入 plugin/wrapper 或 finalize hook 来运行 out-of-loop update pass。
+- 写入前用 `kb_search_notes` 搜索已有 Markdown wiki page
+- 通过直接文件访问或 `kb_search_notes` snippet，基于 `SCHEMA.md`、`index.md`、`log.md` 进行 orientation
+- 当新 vault 还没有 `SCHEMA.md` 时，使用 skill 内置的 schema、page type、index、log 和 provenance 指南进行初始化
+- 将 `kb_search_notes` 视为 snippet 搜索而非完整文件读取，因此在 MCP-only mode 下，如果没有完整的当前 note body，不更新已有 note
+- 通过 `kb_write_note` 写入完整 Markdown note
+- 使用返回的 `content_hash` 作为下一次 optimistic concurrency 的 `if_hash`
+- 保持 raw source immutable，并在 durable wiki 变更时更新 `index.md` 与 `log.md`
+- 将已安装的 hook command 与 native hook、plugin、wrapper 一起使用：用户输入时加载 compact wiki context，agent 结束时运行 stop-time update pass。Claude Code 和 Codex 共享同一套 `UserPromptSubmit`/`Stop` hook schema（in-loop `decision=block` 再提示），因此由 setup 自动接好。Hermes/Hermess 只提供 finalize 类 session hook，因此 setup 会安装 reusable script，供你接入 plugin/wrapper 或 finalize hook 来运行 out-of-loop update pass。
 
-当前服务器暴露的 MCP tool 是 `kb_write_note` 和 `kb_search_notes`。Vault/graph counters 通过 REST `GET /metrics` endpoint 暴露。
+当前服务器暴露的 MCP tool 是 `kb_write_note` 和 `kb_search_notes`。Vault/graph counter 通过 REST `GET /metrics` endpoint 提供。
 
-## 验证
+## Vault Structure
 
-```bash
-uv run ruff format --check .
-uv run ruff check .
-uv run mypy src tests
-uv run pytest --cov=src --cov-fail-under=80
+`KB_VAULT_PATH` 指向的 vault 不只是一堆文件夹，而是 write skill（`kb_write_note`）按固定规则填充的图。本节说明 write skill 在每个文件夹写入什么，以及 AI 如何再次找到它。
+
+### Folder Tree
+
+```text
+KB_VAULT_PATH/
+├── SCHEMA.md        # vault 约定、页面阈值、tag taxonomy
+├── index.md         # synthesized 页面的导航目录
+├── log.md           # append-only 变更审计日志
+├── raw/             # 不可变的原始素材与附件 (raw/assets/)
+├── entities/        # 人物、组织、产品、模型、项目、标准、API
+├── concepts/        # 想法、技术、机制、主题、原则
+├── comparisons/     # 并排分析与决策记录
+└── queries/         # 值得保留的已回答问题 / 调研结果
 ```
+
+`raw/` 是素材；`entities/`、`concepts/`、`comparisons/`、`queries/` 是由 AI 拥有的 synthesized wiki 页面。
+
+### 各文件夹写入的具体内容
+
+write skill 用 frontmatter 的 `type` 值决定页面归属哪个文件夹。
+
+| 文件夹 | `type` | 记录内容 | 不适用 |
+| --- | --- | --- | --- |
+| `entities/` | `entity` | 人物、公司、产品、模型、项目、协议、数据集、标准、API | 宽泛的想法或技术 |
+| `concepts/` | `concept` | 技术、原则、机制、主题、术语、反复出现的模式 | 命名的组织/产品（除非页面讲的是抽象概念） |
+| `comparisons/` | `comparison` | 权衡分析、A-vs-B 决策、排名、矩阵、迁移选择 | 对单一事物的简单总结 |
+| `queries/` | `query` | 值得复用的、充分回答的问题、调查或综合结果 | 琐碎查询或一次性聊天回答 |
+| `concepts/` 或 `queries/` | `summary` | 跨主题的概览与 topic map | 可以更具体分类的页面 |
+
+每个 synthesized 页面都遵循以下规则：
+
+- **Frontmatter:** `title`、`created`、`updated`、`type`、`tags`、`sources` 必填；`confidence`（high/medium/low）与 `contested`（true/false）可选。
+- **正文结构:** `# 标题` 之后依次为 `## Summary`、`## Key facts`、`## Relationships`、`## Open questions`、`## Sources`。
+- **路径:** 小写 kebab-case（`concepts/llm-wiki.md`、`entities/anthropic.md`）。
+- **链接:** 页面间使用 `[[wikilinks]]`；新页面尽量有 2 个以上有用的 outbound 链接。
+- **阈值:** 仅当 entity/concept 出现在 2 个以上 source，或是某个重要 source 的核心时才创建页面；超过约 200 行就拆分。
+
+write skill 会在正文后自动追加 provenance trailer（`<!-- kb-provenance: ... -->`），并在每次有意义的写入时更新 `index.md`（导航）与 `log.md`（审计日志）。`raw/` 下的原始素材保持 immutable，修正与综合写在 wiki 页面里。
+
+### AI 探索它的方式
+
+AI 把 vault 当作图，而不只是文本搜索索引。
+
+1. 先用 `index.md` 和最近的 `log.md` 了解当前地图和最新变更。
+2. 用 `kb_search_notes` 以多个词搜索：用户的措辞、同义词、实体名、tag。
+3. 用 `path_prefix`（`entities`、`concepts`、`comparisons`、`queries`、`raw`）缩小范围。
+4. 沿相关页面的 `[[wikilinks]]` 跟进，当链接页面可能影响综合时一并阅读。
+5. 优先 confidence 更高、日期更新、source 更多的页面；显式标出低 confidence 或 contested 页面。
+6. 当答案成为可复用的综合时，归档为 `queries/` 或 `comparisons/` 页面并更新 `index.md` 和 `log.md`。
+
+由于 `kb_search_notes` 返回 snippet 而非完整文件，在 MCP-only mode 下，AI 不会在没有完整当前 note body 的情况下覆盖已有 note。
