@@ -4,7 +4,12 @@ import argparse
 import sys
 from pathlib import Path
 
-from setup_support.config import DEFAULT_SERVER_NAMES, repo_root_from_script, resolve_config
+from setup_support.config import (
+    DEFAULT_SERVER_NAMES,
+    repo_root_from_script,
+    resolve_config,
+    stable_repo_root,
+)
 from setup_support.installers import install_agent
 
 AGENTS = tuple(DEFAULT_SERVER_NAMES)
@@ -13,7 +18,7 @@ AGENTS = tuple(DEFAULT_SERVER_NAMES)
 def run(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    repo_root = repo_root_from_script(__file__)
+    repo_root = stable_repo_root(repo_root_from_script(__file__))
     status = 0
     for agent in selected_agents(args.agent):
         config = resolve_config(

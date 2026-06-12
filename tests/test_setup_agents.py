@@ -3,7 +3,13 @@ from pathlib import Path
 from pytest import MonkeyPatch
 from setup_support import cli
 from setup_support.codex_config import add_codex_mcp_server
-from setup_support.config import ResolvedConfig, build_server_url, load_env, resolve_config
+from setup_support.config import (
+    ResolvedConfig,
+    build_server_url,
+    load_env,
+    resolve_config,
+    stable_repo_root,
+)
 from setup_support.hooks import (
     install_agent_hooks,
     merge_claude_hook_settings,
@@ -280,6 +286,11 @@ def test_install_agent_hooks는_claude_script와_settings를_설치한다(tmp_pa
     assert "--block-json" in stop_script
     assert "UserPromptSubmit" in settings
     assert "Stop" in settings
+    # Hooks must fail open: a stale checkout or missing uv exits 0, never errors.
+    for script in (context_script, stop_script):
+        assert 'if [ ! -f "$LLM_WIKI_HOOK_HELPER" ]; then' in script
+        assert "command -v uv" in script
+        assert script.count("exit 0") >= 2
 
 
 def test_codex_hook_settings는_hooks_json에_병합하고_중복하지_않는다(
@@ -394,3 +405,65 @@ def test_codex_config는_새_server만_append한다(tmp_path: Path) -> None:
     assert '[profile.default]\nmodel = "gpt-5"' in content
     assert "[mcp_servers.llm_wiki]" in content
     assert 'url = "http://127.0.0.1:9999/mcp"' in content
+
+
+def test_생성된_hook은_helper가_사라지면_fail_open으로_exit_0한다(tmp_path: Path) -> None:
+    import subprocess
+
+    repo_root = tmp_path / "repo"
+    (repo_root / "scripts" / "agent_hooks").mkdir(parents=True)
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        f"CLAUDE_HOOKS_DIR={tmp_path / 'claude-hooks'}\n"
+        f"CLAUDE_SETTINGS_PATH={tmp_path / 'settings.json'}\n",
+        encoding="utf-8",
+    )
+    config = resolve_config(
+        agent="claude",
+        repo_root=repo_root,
+        env_file=env_file,
+        process_env={},
+    )
+
+    result = install_agent_hooks(config)
+    assert result is not None
+
+    # The helper checkout never existed (simulates a removed git worktree); the
+    # hook must exit 0 quietly instead of erroring on every prompt.
+    completed = subprocess.run(
+        ["bash", str(result.stop_hook)],
+        input="{}",
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0
+    assert completed.stdout.strip() == ""
+
+
+def test_stable_repo_root는_git이_없으면_입력_경로를_반환한다(tmp_path: Path) -> None:
+    non_git = tmp_path / "plain"
+    non_git.mkdir()
+
+    assert stable_repo_root(non_git) == non_git
+
+
+def test_stable_repo_root는_worktree에서_메인_worktree를_가리킨다(tmp_path: Path) -> None:
+    import subprocess
+
+    def git(*args: str, cwd: Path) -> None:
+        subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
+    main = tmp_path / "main"
+    main.mkdir()
+    (main / "scripts" / "agent_hooks").mkdir(parents=True)
+    (main / "scripts" / "agent_hooks" / "llm_wiki_agent_hook.py").write_text("", encoding="utf-8")
+    git("init", "-q", cwd=main)
+    git("config", "user.email", "t@example.com", cwd=main)
+    git("config", "user.name", "t", cwd=main)
+    git("add", "-A", cwd=main)
+    git("commit", "-q", "-m", "init", cwd=main)
+
+    worktree = tmp_path / "wt"
+    git("worktree", "add", "-q", str(worktree), "-b", "feature", cwd=main)
+
+    assert stable_repo_root(worktree).resolve() == main.resolve()

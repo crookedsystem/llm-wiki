@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,6 +54,42 @@ class ResolvedConfig:
 
 def repo_root_from_script(script_file: str) -> Path:
     return Path(script_file).resolve().parents[2]
+
+
+def stable_repo_root(repo_root: Path) -> Path:
+    """Resolve to the main git worktree so generated hooks survive worktree churn.
+
+    Installed hooks bake an absolute checkout path (`uv --project <root>` plus the
+    helper script path). When setup runs from an ephemeral git worktree that is
+    later removed, every hook invocation fails with "No such file or directory".
+    The main worktree lives for the repository's lifetime, so prefer it. Falls
+    back to the given root when git is unavailable or the layout is unexpected.
+    """
+    try:
+        completed = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repo_root),
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-common-dir",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return repo_root
+
+    common_dir = completed.stdout.strip()
+    if not common_dir:
+        return repo_root
+
+    main_worktree = Path(common_dir).parent
+    if (main_worktree / "scripts" / "agent_hooks").is_dir():
+        return main_worktree
+    return repo_root
 
 
 def parse_env_file(env_file: Path) -> dict[str, str]:
