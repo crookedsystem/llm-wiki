@@ -74,7 +74,9 @@ uv run python scripts/main.py --agent codex --server-url http://127.0.0.1:9999/m
 
 `scripts/main.py` 读取 `.env` 和 shell export 值，安装 skill、MCP config 和 hook command。如果相同 server name 或 URL 已存在，则不会覆盖已有的 MCP config。
 
-URL 解析顺序为 `--server-url` -> `LLM_WIKI_MCP_URL` -> `KB_HOST`/`KB_PORT`/`KB_MCP_PATH`。Server name 按 `--server-name` -> `LLM_WIKI_MCP_SERVER_NAME` -> agent 默认值的顺序决定。若要关闭 hook 安装，使用 `LLM_WIKI_INSTALL_HOOKS=false` 或 `--no-hooks`。
+默认情况下，setup 会先安装 prompt-time context hook。启用 hook 安装时，它会警告 Stop hook 可能影响 LLM response 的正常接收，并要求输入大写 `Y` 或 `N`：`Y` 安装 Stop hook，`N` 只安装 context hook 后继续，非法输入会重新询问，non-interactive stdin/EOF 会在安装前中止。`--dry-run` 会跳过这个 interactive prompt，并且不会把 Stop hook 放进 dry-run 计划。
+
+URL 解析顺序为 `--server-url` -> `LLM_WIKI_MCP_URL` -> `KB_HOST`/`KB_PORT`/`KB_MCP_PATH`。Server name 按 `--server-name` -> `LLM_WIKI_MCP_SERVER_NAME` -> agent 默认值的顺序决定。若要关闭所有 hook 安装，使用 `LLM_WIKI_INSTALL_HOOKS=false` 或 `--no-hooks`。
 
 设置完成后，重启 agent session 以重新加载 MCP tool、skill 和 hook 配置。
 
@@ -82,9 +84,9 @@ URL 解析顺序为 `--server-url` -> `LLM_WIKI_MCP_URL` -> `KB_HOST`/`KB_PORT`/
 
 ### Hook 的工作原理
 
-Setup 在各 agent 的 hook 目录中创建 `llm-wiki-context-hook.sh`、`llm-wiki-stop-hook.sh`，并为 Claude Code 和 Codex 自动合并到 `UserPromptSubmit`/`Stop` hook 配置中。对 Hermes/Hermess，它会安装可复用 script，便于接入 finalize 类 hook。
+Setup 会在各 agent 的 hook 目录中创建 `llm-wiki-context-hook.sh`。只有在 Stop hook prompt 中回答 `Y` 时才会创建 `llm-wiki-stop-hook.sh`，并为 Claude Code 和 Codex 将选中的 hook entry 合并到 `UserPromptSubmit`/`Stop` hook 配置中。对 Hermes/Hermess，它会安装可复用 script，便于接入 finalize 类 hook。
 
-Context hook 在用户输入时调用 `kb_search_notes`，把相关 wiki snippet 附加到 model 前面。Stop hook 在结束前请求一次 update pass，要求 model 只判断并记录 wiki-worthy 的知识。Claude Code 和 Codex 通过一次 `decision=block` 重新调用 model，并在 `stop_hook_active=true` 时不再阻止，从而避免 loop。如果缺少 hook helper 或 `uv`，hook 会安静退出，不干扰 agent 运行。
+Context hook 在用户输入时调用 `kb_search_notes`，把相关 wiki snippet 附加到 model 前面。被选中时，Stop hook 会在结束前请求一次 update pass，要求 model 只判断并记录 wiki-worthy 的知识。Claude Code 和 Codex 通过一次 `decision=block` 重新调用 model，并在 `stop_hook_active=true` 时不再阻止，从而避免 loop。如果缺少 hook helper 或 `uv`，hook 会安静退出，不干扰 agent 运行。
 
 ### Agent 使用 skill 的方式
 
@@ -97,7 +99,7 @@ Context hook 在用户输入时调用 `kb_search_notes`，把相关 wiki snippet
 - 通过 `kb_write_note` 写入完整 Markdown note
 - 使用返回的 `content_hash` 作为下一次 optimistic concurrency 的 `if_hash`
 - 保持 raw source immutable，并在 durable wiki 变更时更新 `index.md` 与 `log.md`
-- 将已安装的 hook command 与 native hook、plugin、wrapper 一起使用：用户输入时加载 compact wiki context，agent 结束时运行 stop-time update pass。Claude Code 和 Codex 共享同一套 `UserPromptSubmit`/`Stop` hook schema（in-loop `decision=block` 再提示），因此由 setup 自动接好。Hermes/Hermess 只提供 finalize 类 session hook，因此 setup 会安装 reusable script，供你接入 plugin/wrapper 或 finalize hook 来运行 out-of-loop update pass。
+- 将已安装的 hook command 与 native hook、plugin、wrapper 一起使用：用户输入时加载 compact wiki context，并在 setup 中选中时于 agent 结束时运行 stop-time update pass。Claude Code 和 Codex 共享同一套 `UserPromptSubmit`/`Stop` hook schema（in-loop `decision=block` 再提示），因此被选中时 setup 可以接好。Hermes/Hermess 只提供 finalize 类 session hook，因此 setup 会安装 reusable script，供你接入 plugin/wrapper 或 finalize hook 来运行 out-of-loop update pass。
 
 当前服务器暴露的 MCP tool 是 `kb_write_note` 和 `kb_search_notes`。Vault/graph counter 通过 REST `GET /metrics` endpoint 提供。
 

@@ -74,7 +74,9 @@ uv run python scripts/main.py --agent codex --server-url http://127.0.0.1:9999/m
 
 `scripts/main.py` は `.env` と shell export 値を読み、skill、MCP config、hook command をインストールします。同じ server name または URL がすでにある場合は、既存の MCP config を上書きしません。
 
-URL の決定順は `--server-url` -> `LLM_WIKI_MCP_URL` -> `KB_HOST`/`KB_PORT`/`KB_MCP_PATH` です。Server name は `--server-name` -> `LLM_WIKI_MCP_SERVER_NAME` -> agent デフォルト値の順で決まります。Hook インストールを無効にするには `LLM_WIKI_INSTALL_HOOKS=false` または `--no-hooks` を使います。
+デフォルトでは、setup は prompt-time context hook を先にインストールします。Hook インストールが有効な場合、Stop hook が LLM response の受け取りを妨げる可能性があることを警告し、大文字 `Y` または `N` の入力を求めます。`Y` は Stop hook をインストールし、`N` は context hook のみで続行します。無効な入力では再度確認し、non-interactive stdin/EOF ではインストール前に中止します。`--dry-run` はこの interactive prompt を skip し、dry-run plan に Stop hook を含めません。
+
+URL の決定順は `--server-url` -> `LLM_WIKI_MCP_URL` -> `KB_HOST`/`KB_PORT`/`KB_MCP_PATH` です。Server name は `--server-name` -> `LLM_WIKI_MCP_SERVER_NAME` -> agent デフォルト値の順で決まります。すべての hook インストールを無効にするには `LLM_WIKI_INSTALL_HOOKS=false` または `--no-hooks` を使います。
 
 設定後は agent session を再起動して、MCP tool、skill、hook 設定を再読み込みします。
 
@@ -82,9 +84,9 @@ URL の決定順は `--server-url` -> `LLM_WIKI_MCP_URL` -> `KB_HOST`/`KB_PORT`/
 
 ### Hook の動作原理
 
-Setup は agent ごとの hook directory に `llm-wiki-context-hook.sh`、`llm-wiki-stop-hook.sh` を作成し、Claude Code と Codex は `UserPromptSubmit`/`Stop` hook 設定へ自動的に merge します。Hermes/Hermess には、finalize 系 hook へ接続できるよう再利用可能な script をインストールします。
+Setup は agent ごとの hook directory に `llm-wiki-context-hook.sh` を作成します。Stop hook prompt に `Y` と答えた場合だけ `llm-wiki-stop-hook.sh` を作成し、Claude Code と Codex は選択された hook entry を `UserPromptSubmit`/`Stop` hook 設定へ merge します。Hermes/Hermess には、finalize 系 hook へ接続できるよう再利用可能な script をインストールします。
 
-Context hook はユーザー入力時に `kb_search_notes` を呼び出し、関連する wiki snippet を model の前に付け加えます。Stop hook は終了直前に、wiki-worthy な知識だけを判断して記録するよう update pass を依頼します。Claude Code と Codex は一度 `decision=block` で model を再呼び出しし、`stop_hook_active=true` になると再び block しないため loop を回避します。Hook helper や `uv` が無い場合、hook は agent の実行を妨げないよう静かに終了します。
+Context hook はユーザー入力時に `kb_search_notes` を呼び出し、関連する wiki snippet を model の前に付け加えます。選択された場合、Stop hook は終了直前に wiki-worthy な知識だけを判断して記録するよう update pass を依頼します。Claude Code と Codex は一度 `decision=block` で model を再呼び出しし、`stop_hook_active=true` になると再び block しないため loop を回避します。Hook helper や `uv` が無い場合、hook は agent の実行を妨げないよう静かに終了します。
 
 ### Agent が skill を使う方法
 
@@ -97,7 +99,7 @@ Context hook はユーザー入力時に `kb_search_notes` を呼び出し、関
 - `kb_write_note` を通じて完全な Markdown note を書き込む
 - optimistic concurrency のため、返された `content_hash` を次の `if_hash` として使う
 - raw source は immutable に保ち、durable wiki 変更時に `index.md` と `log.md` を更新する
-- インストールされた hook command を native hook、plugin、wrapper と一緒に使う。ユーザー入力時に compact wiki context を読み込み、agent 終了時に stop-time update pass を実行する。Claude Code と Codex は同じ `UserPromptSubmit`/`Stop` hook schema（in-loop `decision=block` 再プロンプト）を共有するため setup が自動で接続する。Hermes/Hermess は finalize 系の session hook しか提供しないため、plugin/wrapper や finalize hook に接続して out-of-loop の update pass を実行できるよう reusable script をインストールする。
+- インストールされた hook command を native hook、plugin、wrapper と一緒に使う。ユーザー入力時に compact wiki context を読み込み、setup で選択した場合は agent 終了時に stop-time update pass を実行する。Claude Code と Codex は同じ `UserPromptSubmit`/`Stop` hook schema（in-loop `decision=block` 再プロンプト）を共有するため、選択された場合は setup が接続できる。Hermes/Hermess は finalize 系の session hook しか提供しないため、plugin/wrapper や finalize hook に接続して out-of-loop の update pass を実行できるよう reusable script をインストールする。
 
 現在サーバーが公開している MCP tool は `kb_write_note`、`kb_search_notes` です。Vault/graph counter は REST `GET /metrics` endpoint で提供します。
 

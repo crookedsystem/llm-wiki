@@ -74,7 +74,9 @@ uv run python scripts/main.py --agent codex --server-url http://127.0.0.1:9999/m
 
 `scripts/main.py` reads `.env` and shell export values to install the skill, MCP config, and hook commands. If the same server name or URL already exists, it does not overwrite the existing MCP config.
 
-The URL resolution order is `--server-url` -> `LLM_WIKI_MCP_URL` -> `KB_HOST`/`KB_PORT`/`KB_MCP_PATH`. The server name is resolved in the order `--server-name` -> `LLM_WIKI_MCP_SERVER_NAME` -> agent default. To turn off hook installation, use `LLM_WIKI_INSTALL_HOOKS=false` or `--no-hooks`.
+By default, setup installs the prompt-time context hook first. When hook installation is enabled, it warns about the Stop hook and asks for uppercase `Y` or `N`: `Y` installs the Stop hook, `N` continues with only the context hook, invalid input repeats the prompt, and non-interactive stdin/EOF aborts before installation. `--dry-run` skips this interactive prompt and does not include the Stop hook in the dry-run plan.
+
+The URL resolution order is `--server-url` -> `LLM_WIKI_MCP_URL` -> `KB_HOST`/`KB_PORT`/`KB_MCP_PATH`. The server name is resolved in the order `--server-name` -> `LLM_WIKI_MCP_SERVER_NAME` -> agent default. To turn off all hook installation, use `LLM_WIKI_INSTALL_HOOKS=false` or `--no-hooks`.
 
 After setup, restart the agent session to reload the MCP tools, skill, and hook configuration.
 
@@ -82,9 +84,9 @@ After setup, restart the agent session to reload the MCP tools, skill, and hook 
 
 ### How hooks work
 
-Setup creates `llm-wiki-context-hook.sh` and `llm-wiki-stop-hook.sh` in each agent's hook directory, and for Claude Code and Codex it automatically merges them into the `UserPromptSubmit`/`Stop` hook configuration. For Hermes/Hermess it installs reusable scripts that you can wire into finalize-style hooks.
+Setup creates `llm-wiki-context-hook.sh` in each agent's hook directory. It creates `llm-wiki-stop-hook.sh` only when the Stop hook prompt is answered with `Y`, and for Claude Code and Codex it merges the selected hook entries into the `UserPromptSubmit`/`Stop` hook configuration. For Hermes/Hermess it installs reusable scripts that you can wire into finalize-style hooks.
 
-The context hook calls `kb_search_notes` at user-input time and prepends relevant wiki snippets in front of the model. The stop hook requests an update pass right before completion, asking the model to record only wiki-worthy knowledge. Claude Code and Codex re-invoke the model once with `decision=block`, and they do not block again once `stop_hook_active=true`, avoiding a loop. If the hook helper or `uv` is missing, the hook exits quietly so it does not interfere with the agent run.
+The context hook calls `kb_search_notes` at user-input time and prepends relevant wiki snippets in front of the model. When selected, the Stop hook requests an update pass right before completion, asking the model to record only wiki-worthy knowledge. Claude Code and Codex re-invoke the model once with `decision=block`, and they do not block again once `stop_hook_active=true`, avoiding a loop. If the hook helper or `uv` is missing, the hook exits quietly so it does not interfere with the agent run.
 
 ### How agents use the skill
 
@@ -97,7 +99,7 @@ The skill instructs the agent to:
 - Write complete Markdown notes through `kb_write_note`
 - Use the returned `content_hash` as the next `if_hash` for optimistic concurrency
 - Keep raw sources immutable and update `index.md` and `log.md` for durable wiki changes
-- Use the installed hook commands together with native hooks, plugins, or wrappers: load compact wiki context at user-input time and run a stop-time update pass when the agent finishes. Claude Code and Codex share the same `UserPromptSubmit`/`Stop` hook schema (in-loop `decision=block` re-prompt), so setup wires them automatically. Hermes/Hermess exposes only finalize-style session hooks, so it gets reusable scripts to wire into a plugin/wrapper or finalize hook for an out-of-loop update pass.
+- Use the installed hook commands together with native hooks, plugins, or wrappers: load compact wiki context at user-input time and, when selected during setup, run a stop-time update pass when the agent finishes. Claude Code and Codex share the same `UserPromptSubmit`/`Stop` hook schema (in-loop `decision=block` re-prompt), so setup can wire them when selected. Hermes/Hermess exposes only finalize-style session hooks, so it gets reusable scripts to wire into a plugin/wrapper or finalize hook for an out-of-loop update pass.
 
 The MCP tools the server currently exposes are `kb_write_note` and `kb_search_notes`. Vault/graph counters are provided through the REST `GET /metrics` endpoint.
 
