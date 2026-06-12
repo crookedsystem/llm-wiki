@@ -8,7 +8,7 @@ from typing import Any
 
 from prompts.installer import HOOK_SCRIPT_TEMPLATE, HOOKS_README_TEMPLATE
 
-from setup_support.config import ResolvedConfig
+from setup_support.config import ResolvedConfig, stable_repo_root
 
 CONTEXT_HOOK_NAME = "llm-wiki-context-hook.sh"
 STOP_HOOK_NAME = "llm-wiki-stop-hook.sh"
@@ -98,7 +98,11 @@ def render_hook_script(
     mode: str,
     extra_args: list[str] | None = None,
 ) -> str:
-    helper = config.repo_root / "scripts" / "agent_hooks" / "llm_wiki_agent_hook.py"
+    # Only the path baked into the hook (uv --project + helper) must survive
+    # worktree churn, so resolve the stable main worktree here. `.env` and skill
+    # sources deliberately stay on config.repo_root (the invoking checkout).
+    hook_repo_root = stable_repo_root(config.repo_root)
+    helper = hook_repo_root / "scripts" / "agent_hooks" / "llm_wiki_agent_hook.py"
     rendered_extra = " ".join(shlex.quote(arg) for arg in (extra_args or []))
     if rendered_extra:
         rendered_extra = f" {rendered_extra}"
@@ -106,7 +110,7 @@ def render_hook_script(
     return HOOK_SCRIPT_TEMPLATE.format(
         server_name=shlex.quote(config.server_name),
         server_url=shlex.quote(config.server_url),
-        repo_root=shlex.quote(str(config.repo_root)),
+        repo_root=shlex.quote(str(hook_repo_root)),
         helper=shlex.quote(str(helper)),
         mode=shlex.quote(mode),
         extra=rendered_extra,

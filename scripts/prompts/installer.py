@@ -20,7 +20,19 @@ if [ -z "${{LLM_WIKI_MCP_URL:-}}" ]; then
 fi
 export LLM_WIKI_MCP_SERVER_NAME LLM_WIKI_MCP_URL
 
-exec uv --project {repo_root} run python {helper} {mode} \\
+LLM_WIKI_HOOK_HELPER={helper}
+
+# Fail open: a hook must never break the agent loop. If the helper checkout was
+# moved or removed (e.g. an ephemeral git worktree deleted after install) or `uv`
+# is not on PATH, exit quietly instead of erroring on every prompt/stop.
+if [ ! -f "$LLM_WIKI_HOOK_HELPER" ]; then
+  exit 0
+fi
+if ! command -v uv >/dev/null 2>&1; then
+  exit 0
+fi
+
+exec uv --project {repo_root} run python "$LLM_WIKI_HOOK_HELPER" {mode} \\
   --server-name "$LLM_WIKI_MCP_SERVER_NAME" \\
   --server-url "$LLM_WIKI_MCP_URL"{extra} "$@"
 """
