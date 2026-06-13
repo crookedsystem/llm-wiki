@@ -130,6 +130,8 @@ class WriteNoteCommand(FrozenModel):
         if self.type not in allowed_types:
             allowed = ", ".join(sorted(allowed_types))
             raise ValueError(f"type {self.type!r} is not allowed for note_path; expected {allowed}")
+        if _is_timezone_aware(self.created) != _is_timezone_aware(self.updated):
+            raise ValueError("created and updated must both include timezone or both omit timezone")
         if self.updated < self.created:
             raise ValueError("updated must be greater than or equal to created")
         return self
@@ -145,6 +147,10 @@ def _allowed_types_for_path(note_path: Path) -> frozenset[WikiNoteType] | None:
 
 def _contains_parent_segment(note_path: Path) -> bool:
     return ".." in note_path.parts
+
+
+def _is_timezone_aware(value: datetime) -> bool:
+    return value.utcoffset() is not None
 
 
 def _has_line_separator(value: str) -> bool:

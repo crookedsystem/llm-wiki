@@ -122,6 +122,11 @@ def test_write_command는_path와_type_불일치와_full_markdown_body를_거부
             datetime(2026, 6, 12, 10, 31, 46),
             "sub-second precision",
         ),
+        (
+            "2026-06-12T09:30:45Z",
+            "2026-06-12T10:31:46",
+            "both include timezone or both omit timezone",
+        ),
     ],
 )
 def test_write_command는_created_updated의_초단위_datetime을_요구한다(
