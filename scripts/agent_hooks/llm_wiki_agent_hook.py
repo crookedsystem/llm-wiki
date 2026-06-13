@@ -75,7 +75,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--context-mode",
         choices=("prompt", "prewrite", "stop"),
         default=os.environ.get("LLM_WIKI_HOOK_CONTEXT_MODE", "prompt"),
-        help="kb_context mode when the server supports sectioned context",
+        help="kb_context mode when the server supports link context",
     )
     parser.add_argument(
         "--limit",
@@ -319,9 +319,20 @@ def format_context_block(
     *,
     max_results: int = DEFAULT_LIMIT,
 ) -> str:
+    if any(
+        isinstance(payload.get(key), list)
+        for key in ("orientation", "broken_links", "link_targets", "suggested_links")
+    ):
+        return format_link_context_block(
+            server_name,
+            server_url,
+            payload,
+            max_results=max_results,
+        )
+
     sections = payload.get("sections")
     if isinstance(sections, list):
-        return format_sectioned_context_block(
+        return format_link_context_block(
             server_name,
             server_url,
             payload,
@@ -365,7 +376,7 @@ def format_context_block(
     return "\n".join(lines)
 
 
-def format_sectioned_context_block(
+def format_link_context_block(
     server_name: str,
     server_url: str,
     payload: Mapping[str, Any],
@@ -376,7 +387,7 @@ def format_sectioned_context_block(
     lines = [
         CONTEXT_BLOCK_OPEN,
         CONTEXT_HEADER_TEMPLATE.format(server_name=server_name, server_url=server_url),
-        f"Relevant existing wiki context from `kb_context` (mode={mode}):",
+        f"Wiki link context from `kb_context` (mode={mode}):",
     ]
 
     usage = payload.get("usage")
@@ -397,6 +408,118 @@ def format_sectioned_context_block(
             for check in prewrite_checks[:2]:
                 lines.append(f"- {str(check)[:240]}")
 
+    printed = _append_link_context(lines, payload, max_results=max_results)
+    if printed == 0:
+        lines.append("No link context candidates were found; use kb_search_notes for evidence.")
+
+    lines.extend([CONTEXT_FOOTER, CONTEXT_BLOCK_CLOSE])
+    return "\n".join(lines)
+
+
+def _append_link_context(
+    lines: list[str],
+    payload: Mapping[str, Any],
+    *,
+    max_results: int,
+) -> int:
+    printed = 0
+    printed += _append_context_references(
+        lines,
+        "orientation",
+        payload.get("orientation"),
+        max_results=max_results - printed,
+    )
+    printed += _append_broken_links(
+        lines,
+        payload.get("broken_links"),
+        max_results=max_results - printed,
+    )
+    printed += _append_context_references(
+        lines,
+        "link_targets",
+        payload.get("link_targets"),
+        max_results=max_results - printed,
+    )
+    printed += _append_suggested_links(
+        lines,
+        payload.get("suggested_links"),
+        max_results=max_results - printed,
+    )
+    if printed > 0:
+        return printed
+    return _append_legacy_sections(lines, payload, max_results=max_results)
+
+
+def _append_context_references(
+    lines: list[str],
+    label: str,
+    value: object,
+    *,
+    max_results: int,
+) -> int:
+    if max_results <= 0:
+        return 0
+    references = value if isinstance(value, list) else []
+    if not references:
+        return 0
+    lines.append(label)
+    printed = 0
+    for reference in references:
+        if printed >= max_results or not isinstance(reference, Mapping):
+            break
+        lines.extend(_format_context_reference(reference))
+        printed += 1
+    return printed
+
+
+def _append_broken_links(
+    lines: list[str],
+    value: object,
+    *,
+    max_results: int,
+) -> int:
+    if max_results <= 0:
+        return 0
+    broken_links = value if isinstance(value, list) else []
+    if not broken_links:
+        return 0
+    lines.append("broken_links")
+    printed = 0
+    for link in broken_links:
+        if printed >= max_results or not isinstance(link, Mapping):
+            break
+        lines.extend(_format_broken_link(link))
+        printed += 1
+    return printed
+
+
+def _append_suggested_links(
+    lines: list[str],
+    value: object,
+    *,
+    max_results: int,
+) -> int:
+    if max_results <= 0:
+        return 0
+    suggested_links = value if isinstance(value, list) else []
+    if not suggested_links:
+        return 0
+    lines.append("suggested_links")
+    printed = 0
+    for link in suggested_links:
+        if printed >= max_results or not isinstance(link, Mapping):
+            break
+        lines.extend(_format_suggested_link(link))
+        printed += 1
+    return printed
+
+
+def _append_legacy_sections(
+    lines: list[str],
+    payload: Mapping[str, Any],
+    *,
+    max_results: int,
+) -> int:
     printed = 0
     raw_sections = payload.get("sections")
     sections = raw_sections if isinstance(raw_sections, list) else []
@@ -416,12 +539,65 @@ def format_sectioned_context_block(
                 break
             lines.extend(_format_context_note(note))
             printed += 1
+    return printed
 
-    if printed == 0:
-        lines.append("No matching section notes were found; use the entity guidance cautiously.")
 
-    lines.extend([CONTEXT_FOOTER, CONTEXT_BLOCK_CLOSE])
-    return "\n".join(lines)
+def _format_context_reference(reference: Mapping[str, Any]) -> list[str]:
+    path = str(reference.get("path") or "(unknown)")
+    title = str(reference.get("title") or path)
+    page_type = str(reference.get("page_type") or "unknown")
+    relation = str(reference.get("relation") or "reference")
+    content_hash = str(reference.get("content_hash") or "")
+    raw_tags = reference.get("tags")
+    tags = raw_tags if isinstance(raw_tags, list) else []
+    tag_suffix = f" tags={','.join(map(str, tags[:5]))}" if tags else ""
+    hash_suffix = f" hash={content_hash[:12]}" if content_hash else ""
+    lines = [
+        f"- [[{path.removesuffix('.md')}]] — {title} "
+        f"({relation}; {page_type}{tag_suffix}{hash_suffix})"
+    ]
+    followup_search = str(reference.get("followup_search") or "").strip()
+    if followup_search:
+        lines.append(f"  - verify: kb_search_notes query={followup_search[:200]}")
+    return lines
+
+
+def _format_broken_link(link: Mapping[str, Any]) -> list[str]:
+    source_path = str(link.get("source_path") or "(unknown)")
+    source_hash = str(link.get("source_content_hash") or "")
+    target = str(link.get("normalized_target") or link.get("target") or "(unknown)")
+    occurrences = link.get("occurrences") or 1
+    suggested_path = str(link.get("suggested_path") or "")
+    hash_suffix = f" hash={source_hash[:12]}" if source_hash else ""
+    lines = [
+        f"- [[{source_path.removesuffix('.md')}]] -> [[{target}]] "
+        f"(missing x{occurrences}{hash_suffix})"
+    ]
+    if suggested_path:
+        lines.append(f"  - suggested_path: {suggested_path}")
+    followup_search = str(link.get("followup_search") or "").strip()
+    if followup_search:
+        lines.append(f"  - verify: kb_search_notes query={followup_search[:200]}")
+    return lines
+
+
+def _format_suggested_link(link: Mapping[str, Any]) -> list[str]:
+    source_path = str(link.get("source_path") or "(unknown)")
+    source_hash = str(link.get("source_content_hash") or "")
+    target_path = str(link.get("target_path") or "(unknown)")
+    relation = str(link.get("relation") or "add_link")
+    reason = str(link.get("reason") or "").strip()
+    hash_suffix = f" hash={source_hash[:12]}" if source_hash else ""
+    lines = [
+        f"- [[{source_path.removesuffix('.md')}]] -> "
+        f"[[{target_path.removesuffix('.md')}]] ({relation}{hash_suffix})"
+    ]
+    if reason:
+        lines.append(f"  - why: {reason[:240]}")
+    followup_search = str(link.get("followup_search") or "").strip()
+    if followup_search:
+        lines.append(f"  - verify: kb_search_notes query={followup_search[:200]}")
+    return lines
 
 
 def _format_context_note(note: Mapping[str, Any]) -> list[str]:

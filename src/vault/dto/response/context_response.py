@@ -1,29 +1,42 @@
 from typing_extensions import TypedDict
 
-from vault.dto.response.search_notes_response import LineMatchResponse
 from vault.service.result.context_result import (
-    ContextNote,
+    BrokenWikiLink,
+    ContextReference,
     ContextResult,
-    ContextSection,
     EntityGuidance,
+    SuggestedLink,
 )
 
 
-class ContextNoteResponse(TypedDict):
+class ContextReferenceResponse(TypedDict):
     path: str
     title: str | None
     page_type: str | None
     tags: list[str]
-    score: float
     content_hash: str
-    matches: list[LineMatchResponse]
-    why_included: str
+    relation: str
+    followup_search: str
 
 
-class ContextSectionResponse(TypedDict):
-    name: str
-    purpose: str
-    notes: list[ContextNoteResponse]
+class BrokenWikiLinkResponse(TypedDict):
+    source_path: str
+    source_content_hash: str
+    target: str
+    normalized_target: str
+    occurrences: int
+    suggested_path: str
+    followup_search: str
+
+
+class SuggestedLinkResponse(TypedDict):
+    source_path: str
+    source_content_hash: str
+    target_path: str
+    target_title: str | None
+    relation: str
+    reason: str
+    followup_search: str
 
 
 class EntityGuidanceResponse(TypedDict):
@@ -38,7 +51,10 @@ class ContextResponse(TypedDict):
     count: int
     usage: list[str]
     entity_guidance: EntityGuidanceResponse
-    sections: list[ContextSectionResponse]
+    orientation: list[ContextReferenceResponse]
+    broken_links: list[BrokenWikiLinkResponse]
+    link_targets: list[ContextReferenceResponse]
+    suggested_links: list[SuggestedLinkResponse]
 
 
 class ContextResponseMapper:
@@ -52,31 +68,58 @@ class ContextResponseMapper:
             "entity_guidance": ContextResponseMapper._entity_guidance_response(
                 result.entity_guidance
             ),
-            "sections": [
-                ContextResponseMapper._context_section_response(section)
-                for section in result.sections
+            "orientation": [
+                ContextResponseMapper._context_reference_response(reference)
+                for reference in result.orientation
+            ],
+            "broken_links": [
+                ContextResponseMapper._broken_wiki_link_response(link)
+                for link in result.broken_links
+            ],
+            "link_targets": [
+                ContextResponseMapper._context_reference_response(reference)
+                for reference in result.link_targets
+            ],
+            "suggested_links": [
+                ContextResponseMapper._suggested_link_response(link)
+                for link in result.suggested_links
             ],
         }
 
     @staticmethod
-    def _context_section_response(section: ContextSection) -> ContextSectionResponse:
+    def _context_reference_response(reference: ContextReference) -> ContextReferenceResponse:
         return {
-            "name": section.name,
-            "purpose": section.purpose,
-            "notes": [ContextResponseMapper._context_note_response(note) for note in section.notes],
+            "path": reference.path,
+            "title": reference.title,
+            "page_type": reference.page_type,
+            "tags": reference.tags,
+            "content_hash": reference.content_hash,
+            "relation": reference.relation,
+            "followup_search": reference.followup_search,
         }
 
     @staticmethod
-    def _context_note_response(note: ContextNote) -> ContextNoteResponse:
+    def _broken_wiki_link_response(link: BrokenWikiLink) -> BrokenWikiLinkResponse:
         return {
-            "path": note.path,
-            "title": note.title,
-            "page_type": note.page_type,
-            "tags": note.tags,
-            "score": note.score,
-            "content_hash": note.content_hash,
-            "matches": [{"line": match.line, "snippet": match.snippet} for match in note.matches],
-            "why_included": note.why_included,
+            "source_path": link.source_path,
+            "source_content_hash": link.source_content_hash,
+            "target": link.target,
+            "normalized_target": link.normalized_target,
+            "occurrences": link.occurrences,
+            "suggested_path": link.suggested_path,
+            "followup_search": link.followup_search,
+        }
+
+    @staticmethod
+    def _suggested_link_response(link: SuggestedLink) -> SuggestedLinkResponse:
+        return {
+            "source_path": link.source_path,
+            "source_content_hash": link.source_content_hash,
+            "target_path": link.target_path,
+            "target_title": link.target_title,
+            "relation": link.relation,
+            "reason": link.reason,
+            "followup_search": link.followup_search,
         }
 
     @staticmethod

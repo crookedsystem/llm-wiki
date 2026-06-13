@@ -3,7 +3,6 @@ from pathlib import Path
 from vault.infrastructure.repository.vault_note_repository import VaultNoteRepository
 from vault.service.command.context_command import ContextCommand
 from vault.service.vault_context_service import VaultContextService
-from vault.service.vault_search_service import VaultSearchService
 
 
 def _write_note(path: Path, content: str) -> None:
@@ -12,14 +11,13 @@ def _write_note(path: Path, content: str) -> None:
 
 
 def _context_service(vault_root: Path) -> VaultContextService:
-    search_service = VaultSearchService(note_repository=VaultNoteRepository(root=vault_root))
-    return VaultContextService(search_service=search_service)
+    return VaultContextService(note_repository=VaultNoteRepository(root=vault_root))
 
 
-def test_context는_prompt_작업에_필요한_bucket과_entity_기준을_반환한다(
+def test_context는_깨진_link와_연결대상과_근거검색어를_반환한다(
     tmp_path: Path,
 ) -> None:
-    # Given: orientation, entity, convention, domain rule note가 있는 vault가 있다.
+    # Given: orientation 파일, entity anchor, domain rule, 깨진 wikilink가 있는 vault가 있다.
     vault_root = tmp_path / "vault"
     _write_note(
         vault_root / "SCHEMA.md",
@@ -28,8 +26,10 @@ def test_context는_prompt_작업에_필요한_bucket과_entity_기준을_반환
         "type: schema\n"
         "tags: [llm-wiki]\n"
         "---\n\n"
-        "# Wiki Schema\n\nfanplus chat domain rule tag taxonomy\n",
+        "# Wiki Schema\n\nlink rules\n",
     )
+    _write_note(vault_root / "index.md", "# Wiki Index\n\nfanplus catalog\n")
+    _write_note(vault_root / "log.md", "# Wiki Log\n\nrecent fanplus changes\n")
     _write_note(
         vault_root / "entities" / "fanplus-api.md",
         "---\n"
@@ -40,133 +40,151 @@ def test_context는_prompt_작업에_필요한_bucket과_entity_기준을_반환
         "# fanplus-api\n\nfanplus chat service repository context\n",
     )
     _write_note(
-        vault_root / "concepts" / "fanplus-api-code-conventions.md",
-        "---\n"
-        "title: fanplus-api code conventions\n"
-        "type: concept\n"
-        "tags: [code-style, maintainability, fanplus-api]\n"
-        "---\n\n"
-        "# fanplus-api code conventions\n\nfanplus chat code convention service style\n",
-    )
-    _write_note(
         vault_root / "concepts" / "fanplus-chat-domain-rules.md",
         "---\n"
         "title: fanplus chat domain rules\n"
         "type: concept\n"
-        "tags: [domain-rule, architecture, fanplus-api]\n"
+        "tags: [domain-rule, fanplus-api]\n"
         "---\n\n"
-        "# fanplus chat domain rules\n\nfanplus chat domain rule secret room\n",
+        "# fanplus chat domain rules\n\nfanplus chat secret room rule\n",
+    )
+    _write_note(
+        vault_root / "queries" / "fanplus-chat.md",
+        "---\n"
+        "title: fanplus chat investigation\n"
+        "type: query\n"
+        "tags: [fanplus-api]\n"
+        "---\n\n"
+        "# fanplus chat investigation\n\nRelated: [[missing-room-rule]]\n",
     )
 
     # When: prompt mode context를 요청한다.
     result = _context_service(vault_root).context(
-        ContextCommand(query="fanplus chat domain", mode="prompt", limit=8)
+        ContextCommand(query="fanplus chat domain", mode="prompt", limit=10)
     )
 
-    # Then: bucket별 note가 중복 없이 반환되고 entity 생성 기준이 함께 제공된다.
+    # Then: context는 snippet이 아닌 연결 작업용 최소 metadata를 반환한다.
     assert result.mode == "prompt"
-    assert result.count >= 4
-    section_by_name = {section.name: section for section in result.sections}
-    assert section_by_name["orientation"].notes[0].path == "SCHEMA.md"
-    assert section_by_name["entity_candidates"].notes[0].path == "entities/fanplus-api.md"
-    paths = [note.path for section in result.sections for note in section.notes]
-    assert len(paths) == len(set(paths))
-    assert any("named project" in criterion for criterion in result.entity_guidance.criteria)
-    assert "prewrite" in " ".join(result.entity_guidance.prewrite_checks)
+    assert [reference.path for reference in result.orientation] == [
+        "SCHEMA.md",
+        "index.md",
+        "log.md",
+    ]
+    assert result.broken_links[0].source_path == "queries/fanplus-chat.md"
+    assert result.broken_links[0].normalized_target == "missing-room-rule"
+    assert result.broken_links[0].suggested_path == "concepts/missing-room-rule.md"
+    assert result.broken_links[0].followup_search == "missing-room-rule"
+    target_by_path = {target.path: target for target in result.link_targets}
+    assert target_by_path["entities/fanplus-api.md"].relation == "entity_anchor"
+    assert target_by_path["concepts/fanplus-chat-domain-rules.md"].relation == "domain_rule"
+    assert all(target.followup_search for target in result.link_targets)
+    assert any("kb_search_notes" in usage for usage in result.usage)
+    assert any("stable link anchors" in criterion for criterion in result.entity_guidance.criteria)
 
 
-def test_context는_limit_안에서_중복_path를_한번만_포함한다(tmp_path: Path) -> None:
-    # Given: 하나의 note가 여러 bucket query에 동시에 걸린다.
+def test_context는_이미_연결되지_않은_관련_note_link를_제안한다(tmp_path: Path) -> None:
+    # Given: query note와 entity note가 같은 tag를 공유하지만 아직 wikilink로 연결되지 않았다.
     vault_root = tmp_path / "vault"
     _write_note(
         vault_root / "entities" / "llm-wiki-mcp.md",
         "---\n"
         "title: llm-wiki-mcp\n"
         "type: entity\n"
-        "tags: [project-context, repository, code-style, domain-rule]\n"
+        "tags: [llm-wiki-mcp]\n"
         "---\n\n"
-        "# llm-wiki-mcp\n\nllm wiki mcp context tool code convention domain rule\n",
+        "# llm-wiki-mcp\n\ncontext graph tool\n",
+    )
+    _write_note(
+        vault_root / "queries" / "context-tool.md",
+        "---\n"
+        "title: context tool design\n"
+        "type: query\n"
+        "tags: [llm-wiki-mcp]\n"
+        "---\n\n"
+        "# context tool design\n\ncontext graph tool should expose link candidates\n",
     )
 
-    # When: 작은 limit으로 context를 요청한다.
+    # When: prewrite mode context를 요청한다.
     result = _context_service(vault_root).context(
-        ContextCommand(query="llm wiki mcp context tool", mode="prewrite", limit=3)
+        ContextCommand(query="llm wiki mcp context graph", mode="prewrite", limit=5)
     )
 
-    # Then: 같은 path는 한 번만 포함되고 limit을 넘지 않는다.
-    paths = [note.path for section in result.sections for note in section.notes]
-    assert paths == ["entities/llm-wiki-mcp.md"]
-    assert result.count == 1
-    assert result.count <= 3
+    # Then: source hash와 target path를 포함한 연결 제안이 나온다.
+    assert result.broken_links == []
+    assert result.suggested_links
+    suggestion = result.suggested_links[0]
+    assert suggestion.source_path == "queries/context-tool.md"
+    assert suggestion.target_path == "entities/llm-wiki-mcp.md"
+    assert suggestion.relation == "add_link_to_entity_anchor"
+    assert "shared tags" in suggestion.reason
+    assert suggestion.source_content_hash
+    assert suggestion.followup_search
 
 
-def test_context는_stop_orientation에_schema_index_log를_모두_포함한다(
+def test_context는_기존_wikilink가_있으면_중복_연결을_제안하지_않는다(
     tmp_path: Path,
 ) -> None:
-    # Given: end-of-turn wiki update 전에 확인해야 하는 세 orientation 파일이 모두 있다.
+    # Given: query note가 이미 entity note를 wikilink로 참조한다.
     vault_root = tmp_path / "vault"
     _write_note(
-        vault_root / "SCHEMA.md",
-        "# Wiki Schema\n\nSCHEMA index log update rules\n",
+        vault_root / "entities" / "llm-wiki-mcp.md",
+        "---\ntitle: llm-wiki-mcp\ntype: entity\ntags: [llm-wiki-mcp]\n---\n\n# llm-wiki-mcp\n",
     )
     _write_note(
-        vault_root / "index.md",
-        "# Wiki Index\n\nSCHEMA index log page catalog\n",
-    )
-    _write_note(
-        vault_root / "log.md",
-        "# Wiki Log\n\nSCHEMA index log recent changes\n",
+        vault_root / "queries" / "context-tool.md",
+        "---\n"
+        "title: context tool design\n"
+        "type: query\n"
+        "tags: [llm-wiki-mcp]\n"
+        "---\n\n"
+        "# context tool design\n\nSee [[entities/llm-wiki-mcp]].\n",
     )
 
-    # When: stop mode context를 요청한다.
+    # When: context를 요청한다.
     result = _context_service(vault_root).context(
-        ContextCommand(query="wiki update", mode="stop", limit=8)
+        ContextCommand(query="llm wiki mcp context graph", mode="prewrite", limit=5)
     )
 
-    # Then: log.md도 orientation 필수 파일로 포함된다.
-    orientation = next(section for section in result.sections if section.name == "orientation")
-    assert [note.path for note in orientation.notes] == ["SCHEMA.md", "index.md", "log.md"]
+    # Then: 이미 존재하는 link는 중복 제안하지 않는다.
+    assert result.suggested_links == []
 
 
-def test_context는_path_prefix가_있어도_orientation_explicit_path를_유지한다(
+def test_context는_path_prefix로_연결_source와_target을_좁히되_orientation은_유지한다(
     tmp_path: Path,
 ) -> None:
-    # Given: orientation 파일과 같은 query에 걸릴 entity note가 함께 있다.
+    # Given: orientation 파일과 entities 안의 target, concepts 안의 별도 note가 있다.
     vault_root = tmp_path / "vault"
-    _write_note(
-        vault_root / "SCHEMA.md",
-        "# Wiki Schema\n\nSCHEMA index log fanplus rules\n",
-    )
-    _write_note(
-        vault_root / "index.md",
-        "# Wiki Index\n\nSCHEMA index log fanplus catalog\n",
-    )
-    _write_note(
-        vault_root / "log.md",
-        "# Wiki Log\n\nSCHEMA index log fanplus recent changes\n",
-    )
+    _write_note(vault_root / "SCHEMA.md", "# Wiki Schema\n\nfanplus schema\n")
+    _write_note(vault_root / "index.md", "# Wiki Index\n\nfanplus index\n")
+    _write_note(vault_root / "log.md", "# Wiki Log\n\nfanplus log\n")
     _write_note(
         vault_root / "entities" / "fanplus-api.md",
         "---\n"
         "title: fanplus-api\n"
         "type: entity\n"
-        "tags: [project-context, fanplus-api]\n"
+        "tags: [fanplus-api]\n"
         "---\n\n"
         "# fanplus-api\n\nfanplus project repository service\n",
     )
+    _write_note(
+        vault_root / "concepts" / "fanplus-domain.md",
+        "---\n"
+        "title: fanplus domain\n"
+        "type: concept\n"
+        "tags: [fanplus-api]\n"
+        "---\n\n"
+        "# fanplus domain\n\nfanplus project repository service\n",
+    )
 
-    # When: caller가 entities prefix로 일반 검색 범위를 좁힌다.
+    # When: caller가 entities prefix로 context graph 범위를 좁힌다.
     result = _context_service(vault_root).context(
         ContextCommand(query="fanplus", mode="prompt", limit=8, path_prefix="entities")
     )
 
-    # Then: orientation은 고정 파일을 유지하고 entity 후보는 잘못 dedupe되지 않는다.
-    section_by_name = {section.name: section for section in result.sections}
-    assert [note.path for note in section_by_name["orientation"].notes] == [
+    # Then: orientation은 유지되고 link target은 prefix 안 note만 반환된다.
+    assert [reference.path for reference in result.orientation] == [
         "SCHEMA.md",
         "index.md",
         "log.md",
     ]
-    assert [note.path for note in section_by_name["entity_candidates"].notes] == [
-        "entities/fanplus-api.md"
-    ]
+    assert [target.path for target in result.link_targets] == ["entities/fanplus-api.md"]

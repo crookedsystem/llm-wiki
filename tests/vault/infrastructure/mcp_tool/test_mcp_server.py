@@ -29,7 +29,9 @@ class SearchToolResult(TypedDict):
 
 class ContextToolResult(TypedDict):
     count: int
-    sections: list[dict[str, object]]
+    broken_links: list[dict[str, object]]
+    link_targets: list[dict[str, object]]
+    suggested_links: list[dict[str, object]]
     entity_guidance: dict[str, object]
     usage: list[str]
 
@@ -112,7 +114,7 @@ def test_mcp_server는_write_search_push_tool을_노출하고_description을_제
         }
         assert "structured fields" in (tool_by_name["kb_write_note"].description or "")
         assert "Search Markdown notes" in (tool_by_name["kb_search_notes"].description or "")
-        assert "Assemble sectioned wiki context" in (tool_by_name["kb_context"].description or "")
+        assert "wiki link context map" in (tool_by_name["kb_context"].description or "")
         assert "push origin to the current branch" in (
             tool_by_name["kb_push_vault"].description or ""
         )
@@ -122,7 +124,10 @@ def test_mcp_server는_write_search_push_tool을_노출하고_description을_제
         assert results[0]["path"] == "concepts/agent-memory.md"
         assert results[0]["content_hash"] == structured_write_result["content_hash"]
         assert structured_context_result["count"] >= 1
-        assert structured_context_result["sections"]
+        assert structured_context_result["link_targets"]
+        assert "sections" not in structured_context_result
+        assert structured_context_result["broken_links"] == []
+        assert structured_context_result["suggested_links"] == []
         assert structured_context_result["entity_guidance"]["criteria"]
         assert structured_context_result["usage"]
 

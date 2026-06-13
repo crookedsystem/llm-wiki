@@ -51,44 +51,55 @@ def test_format_context_block은_search_결과를_compact_context로_만든다()
     assert "write complete Markdown" not in block
 
 
-def test_format_context_block은_context_sections를_bucket별로_출력한다() -> None:
+def test_format_context_block은_link_context를_연결후보별로_출력한다() -> None:
     payload = {
         "query": "fanplus chat",
         "mode": "prompt",
-        "count": 1,
-        "usage": ["Use project rules before direct matches."],
+        "count": 3,
+        "usage": ["Use kb_context as a link/navigation map, not as evidence text."],
         "entity_guidance": {
             "criteria": ["Create an entity for a named project or service."],
             "preferred_paths": ["entities/{project}.md"],
-            "prewrite_checks": ["prewrite: search entities/ first."],
+            "prewrite_checks": ["prewrite: run kb_search_notes with followup_search."],
         },
-        "sections": [
+        "orientation": [],
+        "broken_links": [
             {
-                "name": "entity_candidates",
-                "purpose": "Existing entity anchors.",
-                "notes": [
-                    {
-                        "path": "entities/fanplus-api.md",
-                        "title": "fanplus-api",
-                        "page_type": "entity",
-                        "tags": ["project-context"],
-                        "content_hash": "123456abcdef",
-                        "why_included": "entity candidate",
-                        "matches": [{"line": 3, "snippet": "fanplus chat service"}],
-                    }
-                ],
+                "source_path": "queries/fanplus-chat.md",
+                "source_content_hash": "feedface123456",
+                "target": "missing-room-rule",
+                "normalized_target": "missing-room-rule",
+                "occurrences": 1,
+                "suggested_path": "concepts/missing-room-rule.md",
+                "followup_search": "missing-room-rule",
             }
         ],
+        "link_targets": [
+            {
+                "path": "entities/fanplus-api.md",
+                "title": "fanplus-api",
+                "page_type": "entity",
+                "tags": ["project-context"],
+                "content_hash": "123456abcdef",
+                "relation": "entity_anchor",
+                "followup_search": "fanplus chat fanplus-api",
+            }
+        ],
+        "suggested_links": [],
     }
 
     block = format_context_block("llm_wiki", "http://127.0.0.1:9999/mcp", payload)
 
-    assert "Relevant existing wiki context from `kb_context`" in block
+    assert "Wiki link context from `kb_context`" in block
     assert "mode=prompt" in block
-    assert "entity_candidates" in block
+    assert "broken_links" in block
+    assert "link_targets" in block
     assert "[[entities/fanplus-api]]" in block
+    assert "[[queries/fanplus-chat]] -> [[missing-room-rule]]" in block
+    assert "kb_search_notes query=missing-room-rule" in block
     assert "Create an entity for a named project or service" in block
-    assert "prewrite: search entities/ first" in block
+    assert "prewrite: run kb_search_notes with followup_search" in block
+    assert "fanplus chat service" not in block
 
 
 def test_load_context는_kb_context_실패시_search_notes로_fallback한다(

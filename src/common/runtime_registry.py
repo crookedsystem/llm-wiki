@@ -53,7 +53,7 @@ class RuntimeRegistry:
         )
         git_push_service = VaultGitPushService(repository=git_repository, queue=write_queue)
         search_service = VaultSearchService(note_repository=note_repository)
-        context_service = VaultContextService(search_service=search_service)
+        context_service = VaultContextService(note_repository=note_repository)
         inspection_service = VaultInspectionService(note_repository=note_repository)
         return Runtime(
             note_repository=note_repository,

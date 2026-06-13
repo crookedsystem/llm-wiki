@@ -20,7 +20,8 @@ Do not use it for one-off answers that should not be saved, or when the MCP serv
 The main wiki workflow uses these tool names:
 
 - `kb_write_note(note_path, title, type, tags, sources, body, created, updated, confidence?, contested?, if_hash?)` — write a note inside the configured vault from structured fields. `created` and `updated` must be UTC ISO datetimes with seconds and a trailing `Z` (`YYYY-MM-DDTHH:MM:SSZ`). The server renders YAML frontmatter, the top-level title heading, the body, and provenance. Existing notes require optimistic concurrency.
-- `kb_search_notes(query, limit?, path_prefix?)` — search the Markdown LLM Wiki vault and return ranked paths, titles, page types, tags, content hashes, and line snippets.
+- `kb_context(query, mode?, limit?, path_prefix?)` — build a wiki link context map for prompt, prewrite, or stop-hook use. It returns orientation pages, broken wiki links, existing link targets, suggested links, usage guidance, entity guidance, and `followup_search` queries. It intentionally omits score, snippets, and textual evidence.
+- `kb_search_notes(query, limit?, path_prefix?)` — low-level evidence search. It searches the Markdown LLM Wiki vault and returns ranked paths, titles, page types, tags, content hashes, and line snippets. Use it when `kb_context.followup_search` or your own question needs textual evidence.
 
 Vault and graph counters are exposed as a REST API endpoint at `GET /metrics`, not as MCP tools.
 Vault GitHub push is handled by the separate `$llm-wiki-push` skill and must not be called from this skill.
@@ -50,12 +51,32 @@ queries/         # valuable answered questions worth preserving
 
 ## First actions in a session
 
-1. Confirm the MCP server is connected by listing tools or calling `kb_search_notes` with a narrow orientation query such as `index`.
-2. Orient before writing. If the vault is directly readable through file tools, read `SCHEMA.md`, `index.md`, and the recent tail of `log.md`. If direct file reads are unavailable, use `kb_search_notes` for `SCHEMA`, `index`, `log`, and topic-specific searches.
+1. Confirm the MCP server is connected by listing tools or calling `kb_context` with a narrow orientation query such as `index`.
+2. Orient before writing. Prefer `kb_context(mode="prompt"|"prewrite"|"stop")` to identify orientation pages, broken links, link targets, and suggested links. If the vault is directly readable through file tools, read `SCHEMA.md`, `index.md`, and the recent tail of `log.md` when those pages are relevant. If direct file reads are unavailable and textual evidence is needed, use `kb_search_notes` with the returned `followup_search` values.
 3. Search for existing pages before creating new ones. Avoid duplicate entity or concept pages.
 4. Decide the access mode:
    - **File-readable mode:** safe to update existing notes because you can read the complete current file, preserve existing metadata/body intentionally, and pass the exact current `content_hash` as `if_hash`.
-   - **MCP-only mode:** `kb_search_notes` returns snippets, not full note bodies or every frontmatter field. Do not overwrite an existing note from snippets alone. Create new notes only, or ask the user for the full current note content before updating.
+   - **MCP-only mode:** `kb_context` returns link/navigation metadata, not evidence text. `kb_search_notes` returns snippets, not full note bodies or every frontmatter field. Do not overwrite an existing note from context metadata or snippets alone. Create new notes only, or ask the user for the full current note content before updating.
+
+## Context and search boundary
+
+Use `kb_context` as the default navigation tool when deciding what to connect, repair, or inspect. It is a graph/link map, not a replacement for evidence search.
+
+`kb_context` is best for:
+
+- finding broken wikilinks and their source note hashes;
+- finding existing entity, domain rule, code convention, concept, query, or summary targets that are good link anchors;
+- finding suggested source-to-target links that should be considered before writing;
+- getting `content_hash` values for safe follow-up writes and `followup_search` values for evidence lookup.
+
+`kb_context` must not be used alone to justify a factual claim or overwrite an existing note. When you need the reason a link is valid, run `kb_search_notes` with `followup_search`, or read the full note if the filesystem is available.
+
+Use `kb_search_notes` when:
+
+- a user explicitly asks to search the vault;
+- you need line snippets or textual evidence;
+- a `kb_context` candidate needs verification before a write;
+- you need duplicate-page checks with specific aliases, slugs, or exact names.
 
 ## Content model and page types
 
@@ -245,28 +266,30 @@ Do not hand-author that trailer in the `body` argument unless you are intentiona
 
 1. Capture or identify the source material.
 2. Decide whether it belongs in `raw/` as immutable source, a synthesized page, or both.
-3. Check existing pages from `index.md` and direct search when available.
-4. Create or update only the pages that meet the page thresholds above or the vault `SCHEMA.md` thresholds.
-5. Update navigation (`index.md`) and audit trail (`log.md`).
-6. Report the exact note paths written and the returned hashes.
+3. Call `kb_context(mode="prewrite")` before writing. Repair relevant broken links, reuse existing link targets, and inspect suggested links before creating pages.
+4. Use `kb_search_notes` with `followup_search` when you need evidence for a proposed link or duplicate-page check.
+5. Create or update only the pages that meet the page thresholds above or the vault `SCHEMA.md` thresholds.
+6. Update navigation (`index.md`) and audit trail (`log.md`).
+7. Report the exact note paths written and the returned hashes.
 
 ## Exploration flow
 
 Use the wiki as a graph, not just a text search index:
 
-1. Start with `index.md` and recent `log.md` to understand the current map and recent changes.
-2. Search with multiple terms: the user's wording, likely synonyms, entity names, and tag names.
-3. Use `path_prefix` to narrow searches: `entities`, `concepts`, `comparisons`, `queries`, or `raw`.
-4. Follow `[[wikilinks]]` from relevant pages. Read linked pages before answering if they may change the synthesis.
-5. Prefer pages with higher confidence, newer dates, and multiple sources. Surface low-confidence or contested pages explicitly.
-6. If the answer becomes a reusable synthesis, file it as a `queries/` or `comparisons/` page and update `index.md` and `log.md`.
+1. Start with `kb_context(mode="prompt")` to see orientation pages, broken links, link targets, and suggested links.
+2. Use returned `link_targets` and `suggested_links` to decide which pages are likely relevant.
+3. Search with `kb_search_notes` only when you need textual evidence, exact duplicate checks, or a user's explicit search request. Prefer the returned `followup_search` query when available.
+4. Use `path_prefix` to narrow search or context: `entities`, `concepts`, `comparisons`, `queries`, or `raw`.
+5. Follow `[[wikilinks]]` from relevant pages. Read linked pages before answering if they may change the synthesis.
+6. Prefer pages with higher confidence, newer dates, and multiple sources. Surface low-confidence or contested pages explicitly.
+7. If the answer becomes a reusable synthesis, file it as a `queries/` or `comparisons/` page and update `index.md` and `log.md`.
 
 Example search plan:
 
 ```text
-kb_search_notes(query="llm wiki obsidian vault", limit=5)
-kb_search_notes(query="KB_VAULT_PATH", limit=5)
-kb_search_notes(query="context hook", limit=5, path_prefix="concepts")
+kb_context(query="llm wiki obsidian vault", mode="prompt", limit=12)
+kb_search_notes(query="<followup_search from kb_context>", limit=5)
+kb_context(query="context hook", mode="prewrite", limit=12, path_prefix="concepts")
 ```
 
 ## Concrete examples
@@ -348,8 +371,8 @@ Use hooks or wrappers to make LLM Wiki context part of every agent turn. The rep
 
 When both hooks are installed, the generated scripts call `scripts/agent_hooks/llm_wiki_agent_hook.py` in two modes:
 
-- **User-input hook:** search the wiki through `kb_search_notes` at prompt time and inject a compact `<llm-wiki-context>` block before the model starts working.
-- **Stop hook:** after the model finishes, force one final wiki update pass that records durable discoveries, decisions, and changed context through MCP.
+- **User-input hook:** call `kb_context` at prompt time and inject a compact `<llm-wiki-context>` block containing link/navigation candidates. It falls back to `kb_search_notes` on older servers.
+- **Stop hook:** after the model finishes, force one final wiki update pass that records durable discoveries, decisions, changed context, and useful wikilinks through MCP. It should use `kb_context(mode="stop"|"prewrite")` first and run `kb_search_notes` only when a returned `followup_search` needs textual evidence.
 
 The hook should run every time, but it should not create noisy pages every time. If the task produced no durable knowledge, either write no content page or append only a compact `hook-sync` log entry if the operator wants a full audit trail.
 
@@ -386,9 +409,9 @@ Claude Code supports project/user hook events such as `UserPromptSubmit` and `St
 }
 ```
 
-`llm-wiki-context-hook.sh` should read the incoming prompt metadata from stdin when the agent provides it, query `kb_search_notes` or a local helper for `SCHEMA.md`, `index.md`, recent `log.md`, and topic matches, then print a compact context block to stdout. Keep it short enough that it helps rather than flooding the prompt.
+`llm-wiki-context-hook.sh` should read the incoming prompt metadata from stdin when the agent provides it, query `kb_context` for orientation pages, broken links, link targets, and suggested links, then print a compact context block to stdout. Keep it short enough that it helps rather than flooding the prompt. If `kb_context` is unavailable, fall back to `kb_search_notes`.
 
-`llm-wiki-stop-hook.sh` should read the session/transcript metadata available to the hook, decide what durable knowledge changed, then use `kb_search_notes` plus `kb_write_note` to update pages, `index.md`, and `log.md` with optimistic concurrency. When selected during setup, the Claude/Codex stop hook emits a one-time `decision=block` response so the agent performs that update pass before its final stop; it must not block again when `stop_hook_active=true`.
+`llm-wiki-stop-hook.sh` should read the session/transcript metadata available to the hook, decide what durable knowledge changed, then use `kb_context`, `kb_search_notes` when evidence is needed, and `kb_write_note` to update pages, `index.md`, and `log.md` with optimistic concurrency. When selected during setup, the Claude/Codex stop hook emits a one-time `decision=block` response so the agent performs that update pass before its final stop; it must not block again when `stop_hook_active=true`.
 
 The two architectures for stop-time updates — **in-loop** (re-prompt the same session via `decision=block`) versus **out-of-loop** (a stop hook spawns a separate headless writer such as `claude -p` / `codex exec`) — and their trade-offs are compared in the vault concept page `[[concepts/agent-stop-hook-self-update]]`. When selected during setup, this skill installs the in-loop variant for Claude Code and Codex; see the headless fallback note below for unattended setups.
 
@@ -425,6 +448,7 @@ When you must guarantee the update runs unattended, a stop/finalize hook can spa
 
 - Do not invent existing vault contents. If you cannot read a page, say so and ask for it or create a clearly named draft note instead of overwriting.
 - Do not hard-delete notes through this workflow.
+- Do not treat `kb_context` as evidence text. It is a link/navigation map; run `kb_search_notes` or read full files before making factual claims or replacing existing note bodies.
 - Do not overwrite existing notes in MCP-only mode from snippets alone.
 - Do not call `kb_push_vault` from this skill. Use `$llm-wiki-push` for explicit vault GitHub push requests.
 - Treat the MCP endpoint as local by default: `http://127.0.0.1:9999/mcp`.
@@ -438,6 +462,7 @@ When you must guarantee the update runs unattended, a stop/finalize hook can spa
 Hermes prefixes native MCP tools as `mcp_<server>_<tool>`. With the default `llm_wiki` server name, look for:
 
 - `mcp_llm_wiki_kb_write_note`
+- `mcp_llm_wiki_kb_context`
 - `mcp_llm_wiki_kb_search_notes`
 
 If these tools do not appear, run `hermes mcp list`, `hermes mcp test llm_wiki`, then restart the Hermes session or gateway. In an existing session, use `/reload-mcp` if available.

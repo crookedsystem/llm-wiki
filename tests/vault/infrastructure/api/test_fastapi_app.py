@@ -80,7 +80,7 @@ def test_fastapi_app은_tools_endpoint에서_mcp_tool_schema를_문서화한다(
     push_vault = next(tool for tool in tools if tool["name"] == "kb_push_vault")
     assert "structured fields" in write_note["description"]
     assert "Search Markdown notes" in search_notes["description"]
-    assert "Assemble sectioned wiki context" in context["description"]
+    assert "wiki link context map" in context["description"]
     assert "push origin to the current branch" in push_vault["description"]
     assert write_note["inputSchema"]["type"] == "object"
     assert set(write_note["inputSchema"]["required"]) == {

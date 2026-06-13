@@ -1,4 +1,3 @@
-import re
 from pathlib import Path
 
 from common.model import FrozenModel
@@ -11,8 +10,7 @@ from vault.service.result.vault_inspection_result import (
     VaultInspectionResult,
     VaultStatus,
 )
-
-WIKI_LINK_PATTERN = re.compile(r"\[\[([^\]]+)\]\]")
+from vault.service.vault_wiki_link import extract_wiki_links, normalize_wiki_target
 
 
 class VaultInspectionService(FrozenModel):
@@ -42,9 +40,9 @@ class VaultInspectionService(FrozenModel):
         broken_link_count = 0
 
         for note_path in note_paths:
-            for raw_target in WIKI_LINK_PATTERN.findall(self.note_repository.read_note(note_path)):
+            for raw_target in extract_wiki_links(self.note_repository.read_note(note_path)):
                 link_count += 1
-                target_path = note_ids.get(self._normalize_wiki_target(raw_target))
+                target_path = note_ids.get(normalize_wiki_target(raw_target))
                 if target_path is None:
                     broken_link_count += 1
                     continue
@@ -63,6 +61,3 @@ class VaultInspectionService(FrozenModel):
             ids[relative_path.with_suffix("").as_posix()] = note_path
             ids[note_path.stem] = note_path
         return ids
-
-    def _normalize_wiki_target(self, raw_target: str) -> str:
-        return raw_target.split("|", 1)[0].split("#", 1)[0].strip()

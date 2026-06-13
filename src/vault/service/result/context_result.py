@@ -1,23 +1,35 @@
 from common.model import FrozenModel
 from vault.service.command.context_command import ContextMode
-from vault.service.result.search_notes_result import LineMatch
 
 
-class ContextNote(FrozenModel):
+class ContextReference(FrozenModel):
     path: str
     title: str | None
     page_type: str | None
     tags: list[str]
-    score: float
     content_hash: str
-    matches: list[LineMatch]
-    why_included: str
+    relation: str
+    followup_search: str
 
 
-class ContextSection(FrozenModel):
-    name: str
-    purpose: str
-    notes: list[ContextNote]
+class BrokenWikiLink(FrozenModel):
+    source_path: str
+    source_content_hash: str
+    target: str
+    normalized_target: str
+    occurrences: int
+    suggested_path: str
+    followup_search: str
+
+
+class SuggestedLink(FrozenModel):
+    source_path: str
+    source_content_hash: str
+    target_path: str
+    target_title: str | None
+    relation: str
+    reason: str
+    followup_search: str
 
 
 class EntityGuidance(FrozenModel):
@@ -32,4 +44,7 @@ class ContextResult(FrozenModel):
     count: int
     usage: list[str]
     entity_guidance: EntityGuidance
-    sections: list[ContextSection]
+    orientation: list[ContextReference]
+    broken_links: list[BrokenWikiLink]
+    link_targets: list[ContextReference]
+    suggested_links: list[SuggestedLink]

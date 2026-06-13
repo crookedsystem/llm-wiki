@@ -85,9 +85,9 @@ def register_vault_tools(
 
     @server.tool(
         description=(
-            "Assemble sectioned wiki context for prompt, prewrite, or stop-hook use. "
-            "Returns orientation, entity candidates, project context, code conventions, "
-            "domain rules, direct matches, usage guidance, and entity creation criteria."
+            "Build a wiki link context map for prompt, prewrite, or stop-hook use. "
+            "Returns orientation pages, broken wiki links, existing link targets, suggested "
+            "links, usage guidance, and followup_search queries for kb_search_notes evidence."
         )
     )
     def kb_context(
