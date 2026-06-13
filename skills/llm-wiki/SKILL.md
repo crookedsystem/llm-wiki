@@ -100,7 +100,7 @@ contested: false
 ---
 ```
 
-`title`, `created`, `updated`, `type`, `tags`, `sources`, and `body` are required tool arguments. `created` and `updated` must be ISO datetimes with seconds, such as `2026-06-09T14:30:05`; date-only values are invalid. `confidence` and `contested` are optional but useful. Use `confidence: low` for single-source, speculative, or fast-moving claims. Use `contested: true` when sources conflict and explain the conflict in the body.
+`title`, `created`, `updated`, `type`, `tags`, `sources`, and `body` are required tool arguments. `created` and `updated` must be ISO datetimes with seconds, such as `2026-06-09T14:30:05`; date-only values and timezone suffixes (e.g. `Z` or `+09:00`) are invalid. `confidence` and `contested` are optional but useful. Use `confidence: low` for single-source, speculative, or fast-moving claims. Use `contested: true` when sources conflict and explain the conflict in the body.
 
 Path and type must agree:
 

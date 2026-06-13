@@ -21,18 +21,24 @@ WikiNoteType: TypeAlias = Literal[
 ]
 ConfidenceLevel: TypeAlias = Literal["high", "medium", "low"]
 
-_NOTE_TIMESTAMP_WITH_SECONDS = re.compile(
-    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})?"
+_NOTE_TIMESTAMP_WITH_SECONDS = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
+_NOTE_TIMESTAMP_WITH_TIMEZONE = re.compile(
+    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})"
 )
 
 
 def _validate_note_timestamp_input(value: object) -> object:
     if isinstance(value, datetime):
+        if value.tzinfo is not None:
+            raise ValueError("created and updated must not include timezone")
         return value
     if isinstance(value, date):
         raise ValueError("created and updated must include time down to seconds")
-    if isinstance(value, str) and not _NOTE_TIMESTAMP_WITH_SECONDS.fullmatch(value):
-        raise ValueError("created and updated must use ISO datetime format with seconds")
+    if isinstance(value, str):
+        if _NOTE_TIMESTAMP_WITH_TIMEZONE.fullmatch(value):
+            raise ValueError("created and updated must not include timezone")
+        if not _NOTE_TIMESTAMP_WITH_SECONDS.fullmatch(value):
+            raise ValueError("created and updated must use ISO datetime format with seconds")
     return value
 
 
@@ -130,8 +136,6 @@ class WriteNoteCommand(FrozenModel):
         if self.type not in allowed_types:
             allowed = ", ".join(sorted(allowed_types))
             raise ValueError(f"type {self.type!r} is not allowed for note_path; expected {allowed}")
-        if _is_timezone_aware(self.created) != _is_timezone_aware(self.updated):
-            raise ValueError("created and updated must both include timezone or both omit timezone")
         if self.updated < self.created:
             raise ValueError("updated must be greater than or equal to created")
         return self
@@ -147,10 +151,6 @@ def _allowed_types_for_path(note_path: Path) -> frozenset[WikiNoteType] | None:
 
 def _contains_parent_segment(note_path: Path) -> bool:
     return ".." in note_path.parts
-
-
-def _is_timezone_aware(value: datetime) -> bool:
-    return value.utcoffset() is not None
 
 
 def _has_line_separator(value: str) -> bool:

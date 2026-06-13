@@ -1,5 +1,5 @@
 import asyncio
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -125,7 +125,17 @@ def test_write_command는_path와_type_불일치와_full_markdown_body를_거부
         (
             "2026-06-12T09:30:45Z",
             "2026-06-12T10:31:46",
-            "both include timezone or both omit timezone",
+            "must not include timezone",
+        ),
+        (
+            "2026-06-12T09:30:45",
+            "2026-06-12T10:31:46+09:00",
+            "must not include timezone",
+        ),
+        (
+            datetime(2026, 6, 12, 9, 30, 45, tzinfo=timezone.utc),
+            datetime(2026, 6, 12, 10, 31, 46, tzinfo=timezone.utc),
+            "must not include timezone",
         ),
     ],
 )

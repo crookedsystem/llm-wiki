@@ -24,7 +24,7 @@ def register_vault_tools(
         description=(
             "Write a Markdown wiki note from structured fields. The tool renders YAML "
             "frontmatter, title heading, body, and provenance inside the configured vault. "
-            "created and updated must be ISO datetimes with seconds. "
+            "created and updated must be ISO datetimes with seconds and no timezone. "
             "Existing notes require the current content_hash as if_hash."
         )
     )
