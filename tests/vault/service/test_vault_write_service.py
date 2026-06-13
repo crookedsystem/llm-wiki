@@ -1,6 +1,7 @@
 import asyncio
 from datetime import date, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -124,8 +125,8 @@ def test_write_command는_path와_type_불일치와_full_markdown_body를_거부
     ],
 )
 def test_write_command는_created_updated의_초단위_datetime을_요구한다(
-    created: object,
-    updated: object,
+    created: Any,
+    updated: Any,
     error: str,
 ) -> None:
     # When / Then: date-only, minute precision, sub-second precision timestamp는 거부된다.

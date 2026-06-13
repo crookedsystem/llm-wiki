@@ -15,8 +15,11 @@ def main() -> int:
         print("## 테스트 커버리지")
         print()
         print(
-            "coverage.json 파일을 찾지 못했습니다. 테스트가 report 생성 전에 실패했을 수 있습니다."
+            "coverage.json 파일을 찾지 못했습니다. "
+            "타입 검사나 테스트가 coverage report 생성 전에 실패했을 수 있습니다."
         )
+        print()
+        print("먼저 실패한 CI step 로그를 확인해 주세요.")
         return 0
 
     data = json.loads(coverage_path.read_text(encoding="utf-8"))
