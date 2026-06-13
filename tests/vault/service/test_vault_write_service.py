@@ -1,6 +1,7 @@
 import asyncio
-from datetime import date
+from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -30,8 +31,8 @@ def _write_command(
         tags=tags,
         sources=sources,
         body=body,
-        created=date(2026, 6, 12),
-        updated=date(2026, 6, 12),
+        created=datetime(2026, 6, 12, 9, 30, 45, tzinfo=UTC),
+        updated=datetime(2026, 6, 12, 10, 31, 46, tzinfo=UTC),
         confidence="medium",
         contested=False,
         if_hash=if_hash,
@@ -99,12 +100,100 @@ def test_write_command는_path와_type_불일치와_full_markdown_body를_거부
             tags=("agent-memory",),
             sources=("raw/articles/source.md",),
             body="## Summary\nBody",
-            created=date(2026, 6, 12),
-            updated=date(2026, 6, 12),
+            created=datetime(2026, 6, 12, 9, 30, 45, tzinfo=UTC),
+            updated=datetime(2026, 6, 12, 10, 31, 46, tzinfo=UTC),
         )
 
     with pytest.raises(ValidationError, match="YAML frontmatter"):
         _write_command(body="---\ntitle: Bad\n---\n# Bad")
+
+
+@pytest.mark.parametrize(
+    ("created", "updated", "error"),
+    [
+        (date(2026, 6, 12), datetime(2026, 6, 12, 10, 31, 46, tzinfo=UTC), "include time"),
+        (
+            "2026-06-12T09:30",
+            "2026-06-12T10:31:46Z",
+            "YYYY-MM-DDTHH:MM:SSZ",
+        ),
+        (
+            "2026-06-12T09:30:45",
+            "2026-06-12T10:31:46Z",
+            "YYYY-MM-DDTHH:MM:SSZ",
+        ),
+        (
+            "2026-06-12T18:30:45+09:00",
+            "2026-06-12T10:31:46Z",
+            "YYYY-MM-DDTHH:MM:SSZ",
+        ),
+        (
+            datetime(2026, 6, 12, 9, 30, 45),
+            datetime(2026, 6, 12, 10, 31, 46, tzinfo=UTC),
+            "UTC timezone",
+        ),
+        (
+            datetime(2026, 6, 12, 18, 30, 45, tzinfo=timezone(timedelta(hours=9))),
+            datetime(2026, 6, 12, 10, 31, 46, tzinfo=UTC),
+            "UTC timezone",
+        ),
+        (
+            datetime(2026, 6, 12, 9, 30, 45, 123, tzinfo=UTC),
+            datetime(2026, 6, 12, 10, 31, 46, tzinfo=UTC),
+            "sub-second precision",
+        ),
+    ],
+)
+def test_write_command는_created_updated의_초단위_UTC_Z_datetime을_요구한다(
+    created: Any,
+    updated: Any,
+    error: str,
+) -> None:
+    # When / Then: date-only, Z 없는 값, offset, sub-second timestamp는 거부된다.
+    with pytest.raises(ValidationError, match=error):
+        WriteNoteCommand(
+            note_path="concepts/today.md",
+            title="Today",
+            type="concept",
+            tags=("agent-memory",),
+            sources=("raw/articles/source.md",),
+            body="## Summary\nBody text",
+            created=created,
+            updated=updated,
+        )
+
+
+@pytest.mark.parametrize(
+    ("created", "updated"),
+    [
+        ("2026-06-12T09:30:45Z", "2026-06-12T10:31:46Z"),
+        (
+            datetime(2026, 6, 12, 9, 30, 45, tzinfo=UTC),
+            datetime(2026, 6, 12, 10, 31, 46, tzinfo=UTC),
+        ),
+    ],
+)
+def test_write_command는_created_updated를_UTC_Z_datetime으로_정규화한다(
+    created: Any,
+    updated: Any,
+) -> None:
+    # When: UTC Z 문자열 또는 UTC-aware datetime으로 command를 만든다.
+    command = WriteNoteCommand(
+        note_path="concepts/today.md",
+        title="Today",
+        type="concept",
+        tags=("agent-memory",),
+        sources=("raw/articles/source.md",),
+        body="## Summary\nBody text",
+        created=created,
+        updated=updated,
+    )
+
+    # Then: 두 timestamp 모두 UTC tz-aware로 정규화되어 혼합 awareness 비교가 발생하지 않는다.
+    assert command.created.tzinfo == UTC
+    assert command.updated.tzinfo == UTC
+    assert command.created == datetime(2026, 6, 12, 9, 30, 45, tzinfo=UTC)
+    assert command.updated == datetime(2026, 6, 12, 10, 31, 46, tzinfo=UTC)
 
 
 @pytest.mark.parametrize("line_separator", ["\n", "\r", "\r\n", "\u2028"])

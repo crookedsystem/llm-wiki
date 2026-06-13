@@ -153,7 +153,7 @@ The write skill uses the frontmatter `type` value to decide which folder a page 
 
 Every synthesized page follows these rules:
 
-- **Frontmatter:** `title`, `created`, `updated`, `type`, `tags`, `sources` are required; `confidence` (high/medium/low) and `contested` (true/false) are optional.
+- **Frontmatter:** `title`, `created`, `updated`, `type`, `tags`, `sources` are required; `created` and `updated` must be UTC ISO datetimes with seconds and a trailing `Z` (`YYYY-MM-DDTHH:MM:SSZ`); `confidence` (high/medium/low) and `contested` (true/false) are optional.
 - **Body shape:** `# Title` followed by `## Summary`, `## Key facts`, `## Relationships`, `## Open questions`, `## Sources`.
 - **Paths:** lowercase kebab-case (`concepts/llm-wiki.md`, `entities/anthropic.md`).
 - **Links:** `[[wikilinks]]` between pages; new pages should have at least two useful outbound links when possible.

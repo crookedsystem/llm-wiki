@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import UTC, datetime
 
 from vault.service.command.write_note_command import WriteNoteCommand
 from vault.service.vault_note_renderer import VaultNoteRenderer
@@ -19,8 +19,8 @@ def _write_command(
         tags=tags,
         sources=sources,
         body=body,
-        created=date(2026, 6, 12),
-        updated=date(2026, 6, 12),
+        created=datetime(2026, 6, 12, 9, 30, 45, tzinfo=UTC),
+        updated=datetime(2026, 6, 12, 10, 31, 46, tzinfo=UTC),
         confidence="medium",
         contested=contested,
     )
@@ -37,8 +37,8 @@ def test_note_renderer는_structured_command를_markdown_note로_렌더링한다
     assert rendered == (
         "---\n"
         "title: Today\n"
-        "created: 2026-06-12\n"
-        "updated: 2026-06-12\n"
+        'created: "2026-06-12T09:30:45Z"\n'
+        'updated: "2026-06-12T10:31:46Z"\n'
         "type: concept\n"
         "tags:\n"
         "  - agent-memory\n"

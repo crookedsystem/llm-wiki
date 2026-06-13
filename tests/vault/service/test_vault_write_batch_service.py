@@ -1,5 +1,5 @@
 import asyncio
-from datetime import date
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -25,8 +25,8 @@ def _write_command(
         tags=("batch",),
         sources=("raw/articles/source.md",),
         body=f"## Summary\n{body}",
-        created=date(2026, 6, 12),
-        updated=date(2026, 6, 12),
+        created=datetime(2026, 6, 12, 9, 30, 45, tzinfo=UTC),
+        updated=datetime(2026, 6, 12, 10, 31, 46, tzinfo=UTC),
         if_hash=if_hash,
     )
 

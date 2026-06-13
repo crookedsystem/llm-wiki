@@ -19,7 +19,7 @@ Do not use it for one-off answers that should not be saved, or when the MCP serv
 
 The main wiki workflow uses these tool names:
 
-- `kb_write_note(note_path, title, type, tags, sources, body, created, updated, confidence?, contested?, if_hash?)` — write a note inside the configured vault from structured fields. The server renders YAML frontmatter, the top-level title heading, the body, and provenance. Existing notes require optimistic concurrency.
+- `kb_write_note(note_path, title, type, tags, sources, body, created, updated, confidence?, contested?, if_hash?)` — write a note inside the configured vault from structured fields. `created` and `updated` must be UTC ISO datetimes with seconds and a trailing `Z` (`YYYY-MM-DDTHH:MM:SSZ`). The server renders YAML frontmatter, the top-level title heading, the body, and provenance. Existing notes require optimistic concurrency.
 - `kb_search_notes(query, limit?, path_prefix?)` — search the Markdown LLM Wiki vault and return ranked paths, titles, page types, tags, content hashes, and line snippets.
 
 Vault and graph counters are exposed as a REST API endpoint at `GET /metrics`, not as MCP tools.
@@ -91,8 +91,8 @@ Every wiki page is written through structured fields that render YAML frontmatte
 ```yaml
 ---
 title: Page Title
-created: YYYY-MM-DD
-updated: YYYY-MM-DD
+created: YYYY-MM-DDTHH:MM:SSZ
+updated: YYYY-MM-DDTHH:MM:SSZ
 type: raw | entity | concept | comparison | query | summary | schema | index | log
 tags: [tag-from-schema]
 sources: [raw/articles/source-file.md]
@@ -101,7 +101,7 @@ contested: false
 ---
 ```
 
-`title`, `created`, `updated`, `type`, `tags`, `sources`, and `body` are required tool arguments. `confidence` and `contested` are optional but useful. Use `confidence: low` for single-source, speculative, or fast-moving claims. Use `contested: true` when sources conflict and explain the conflict in the body.
+`title`, `created`, `updated`, `type`, `tags`, `sources`, and `body` are required tool arguments. `created` and `updated` must be UTC ISO datetimes with seconds and a trailing `Z`, such as `2026-06-09T14:30:05Z`; date-only, non-UTC, offset, and sub-second values are invalid. `confidence` and `contested` are optional but useful. Use `confidence: low` for single-source, speculative, or fast-moving claims. Use `contested: true` when sources conflict and explain the conflict in the body.
 
 Path and type must agree:
 
@@ -160,7 +160,7 @@ If `SCHEMA.md` is missing or the user is creating a new vault, create it before 
 - Append every durable action to `log.md`.
 
 ## Frontmatter
-Required fields: `title`, `created`, `updated`, `type`, `tags`, `sources`.
+Required fields: `title`, `created`, `updated`, `type`, `tags`, `sources`. `created` and `updated` use UTC ISO datetimes with seconds and a trailing `Z` (`YYYY-MM-DDTHH:MM:SSZ`).
 Allowed `type` values: `raw`, `entity`, `concept`, `comparison`, `query`, `summary`, `schema`, `index`, `log`.
 
 ## Tag taxonomy
@@ -282,8 +282,8 @@ These are the fields you pass to `kb_write_note`; the server renders frontmatter
   "type": "concept",
   "tags": ["knowledge-base", "agent-memory"],
   "sources": ["raw/articles/karpathy-llm-wiki.md"],
-  "created": "2026-06-09",
-  "updated": "2026-06-09",
+  "created": "2026-06-09T14:30:05Z",
+  "updated": "2026-06-09T14:45:12Z",
   "confidence": "medium",
   "contested": false,
   "body": "## Summary\nAn LLM Wiki is an agent-maintained Markdown knowledge base where raw sources stay immutable and synthesized pages accumulate durable context for future work.\n\n## Key facts\n- It differs from one-shot RAG because synthesis is saved once and reused later.\n- A useful vault separates `raw/` source material from synthesized pages such as [[concepts/agent-memory]] and [[comparisons/rag-vs-llm-wiki]].\n\n## Relationships\n- [[concepts/agent-memory]] — persistent context strategy for agents.\n- [[comparisons/rag-vs-llm-wiki]] — tradeoffs between retrieval and compiled wiki context.\n\n## Open questions\n- Which updates should be automatic at task stop time versus manually reviewed?\n\n## Sources\n- raw/articles/karpathy-llm-wiki.md"
@@ -295,8 +295,8 @@ The rendered note begins like this before the provenance trailer:
 ```markdown
 ---
 title: LLM Wiki
-created: 2026-06-09
-updated: 2026-06-09
+created: "2026-06-09T14:30:05Z"
+updated: "2026-06-09T14:45:12Z"
 type: concept
 tags:
   - knowledge-base

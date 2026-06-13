@@ -1,5 +1,3 @@
-from datetime import date
-
 from mcp.server.fastmcp import FastMCP
 
 from vault.dto.request.context_request import ContextRequest
@@ -17,6 +15,7 @@ from vault.dto.response.write_note_response import (
 )
 from vault.service.command.context_command import ContextMode
 from vault.service.command.write_note_command import ConfidenceLevel, WikiNoteType
+from vault.service.note_timestamp import NoteTimestamp
 from vault.service.vault_context_service import VaultContextService
 from vault.service.vault_git_push_service import VaultGitPushService
 from vault.service.vault_search_service import VaultSearchService
@@ -34,6 +33,8 @@ def register_vault_tools(
         description=(
             "Write a Markdown wiki note from structured fields. The tool renders YAML "
             "frontmatter, title heading, body, and provenance inside the configured vault. "
+            "created and updated must be UTC ISO datetimes with seconds and trailing Z "
+            "(YYYY-MM-DDTHH:MM:SSZ). "
             "Existing notes require the current content_hash as if_hash."
         )
     )
@@ -44,8 +45,8 @@ def register_vault_tools(
         tags: list[str],
         sources: list[str],
         body: str,
-        created: date,
-        updated: date,
+        created: NoteTimestamp,
+        updated: NoteTimestamp,
         confidence: ConfidenceLevel | None = None,
         contested: bool | None = None,
         if_hash: str | None = None,

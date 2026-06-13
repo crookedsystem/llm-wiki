@@ -137,7 +137,7 @@ write skill은 frontmatter의 `type` 값으로 페이지가 어느 폴더에 들
 
 모든 synthesized 페이지는 다음 규칙을 따릅니다:
 
-- **Frontmatter:** `title`, `created`, `updated`, `type`, `tags`, `sources`는 필수, `confidence`(high/medium/low)와 `contested`(true/false)는 선택.
+- **Frontmatter:** `title`, `created`, `updated`, `type`, `tags`, `sources`는 필수이며, `created`와 `updated`는 초까지 포함하고 끝에 `Z`가 붙은 UTC ISO datetime이어야 합니다(`YYYY-MM-DDTHH:MM:SSZ`). `confidence`(high/medium/low)와 `contested`(true/false)는 선택.
 - **본문 형태:** `# 제목` 다음에 `## Summary`, `## Key facts`, `## Relationships`, `## Open questions`, `## Sources` 순서.
 - **경로:** 소문자 kebab-case (`concepts/llm-wiki.md`, `entities/anthropic.md`).
 - **링크:** 페이지 간에는 `[[wikilinks]]`, 새 페이지는 가능하면 outbound 링크 2개 이상.

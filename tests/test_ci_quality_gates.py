@@ -31,6 +31,24 @@ def test_ci는_커버리지_요약을_pr에_댓글로_게시한다() -> None:
         assert fragment in workflow
 
 
+def test_ci는_branch_push와_pr_update마다_실행된다() -> None:
+    # Given: CI workflow가 있다.
+    workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+
+    # When: trigger 설정을 확인한다.
+    required_fragments = [
+        "push:",
+        'branches:\n      - "**"',
+        "pull_request:",
+        "synchronize",
+        "ready_for_review",
+    ]
+
+    # Then: branch push와 PR commit update 모두 CI를 재실행해야 한다.
+    for fragment in required_fragments:
+        assert fragment in workflow
+
+
 def test_ci는_mypy와_커버리지_80퍼센트_게이트를_강제한다() -> None:
     # Given: CI workflow와 coverage 설정이 있다.
     workflow = CI_WORKFLOW.read_text(encoding="utf-8")

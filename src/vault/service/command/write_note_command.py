@@ -1,4 +1,3 @@
-from datetime import date
 from pathlib import Path
 from typing import Literal, TypeAlias
 
@@ -6,6 +5,7 @@ from pydantic import Field, field_validator, model_validator
 
 from common.model import FrozenModel
 from vault.entity.vault_note import FRONTMATTER_DELIMITER, PROVENANCE_PREFIX
+from vault.service.note_timestamp import NoteTimestamp
 
 WikiNoteType: TypeAlias = Literal[
     "raw",
@@ -41,8 +41,8 @@ class WriteNoteCommand(FrozenModel):
     tags: tuple[str, ...]
     sources: tuple[str, ...]
     body: str = Field(min_length=1)
-    created: date
-    updated: date
+    created: NoteTimestamp
+    updated: NoteTimestamp
     confidence: ConfidenceLevel | None = None
     contested: bool | None = None
     if_hash: str | None = None

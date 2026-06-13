@@ -137,7 +137,7 @@ write skill 用 frontmatter 的 `type` 值决定页面归属哪个文件夹。
 
 每个 synthesized 页面都遵循以下规则：
 
-- **Frontmatter:** `title`、`created`、`updated`、`type`、`tags`、`sources` 必填；`confidence`（high/medium/low）与 `contested`（true/false）可选。
+- **Frontmatter:** `title`、`created`、`updated`、`type`、`tags`、`sources` 必填；`created` 和 `updated` 必须是包含秒且以 `Z` 结尾的 UTC ISO datetime（`YYYY-MM-DDTHH:MM:SSZ`）；`confidence`（high/medium/low）与 `contested`（true/false）可选。
 - **正文结构:** `# 标题` 之后依次为 `## Summary`、`## Key facts`、`## Relationships`、`## Open questions`、`## Sources`。
 - **路径:** 小写 kebab-case（`concepts/llm-wiki.md`、`entities/anthropic.md`）。
 - **链接:** 页面间使用 `[[wikilinks]]`；新页面尽量有 2 个以上有用的 outbound 链接。
