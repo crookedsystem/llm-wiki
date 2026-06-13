@@ -98,3 +98,75 @@ def test_context는_limit_안에서_중복_path를_한번만_포함한다(tmp_pa
     assert paths == ["entities/llm-wiki-mcp.md"]
     assert result.count == 1
     assert result.count <= 3
+
+
+def test_context는_stop_orientation에_schema_index_log를_모두_포함한다(
+    tmp_path: Path,
+) -> None:
+    # Given: end-of-turn wiki update 전에 확인해야 하는 세 orientation 파일이 모두 있다.
+    vault_root = tmp_path / "vault"
+    _write_note(
+        vault_root / "SCHEMA.md",
+        "# Wiki Schema\n\nSCHEMA index log update rules\n",
+    )
+    _write_note(
+        vault_root / "index.md",
+        "# Wiki Index\n\nSCHEMA index log page catalog\n",
+    )
+    _write_note(
+        vault_root / "log.md",
+        "# Wiki Log\n\nSCHEMA index log recent changes\n",
+    )
+
+    # When: stop mode context를 요청한다.
+    result = _context_service(vault_root).context(
+        ContextCommand(query="wiki update", mode="stop", limit=8)
+    )
+
+    # Then: log.md도 orientation 필수 파일로 포함된다.
+    orientation = next(section for section in result.sections if section.name == "orientation")
+    assert [note.path for note in orientation.notes] == ["SCHEMA.md", "index.md", "log.md"]
+
+
+def test_context는_path_prefix가_있어도_orientation_explicit_path를_유지한다(
+    tmp_path: Path,
+) -> None:
+    # Given: orientation 파일과 같은 query에 걸릴 entity note가 함께 있다.
+    vault_root = tmp_path / "vault"
+    _write_note(
+        vault_root / "SCHEMA.md",
+        "# Wiki Schema\n\nSCHEMA index log fanplus rules\n",
+    )
+    _write_note(
+        vault_root / "index.md",
+        "# Wiki Index\n\nSCHEMA index log fanplus catalog\n",
+    )
+    _write_note(
+        vault_root / "log.md",
+        "# Wiki Log\n\nSCHEMA index log fanplus recent changes\n",
+    )
+    _write_note(
+        vault_root / "entities" / "fanplus-api.md",
+        "---\n"
+        "title: fanplus-api\n"
+        "type: entity\n"
+        "tags: [project-context, fanplus-api]\n"
+        "---\n\n"
+        "# fanplus-api\n\nfanplus project repository service\n",
+    )
+
+    # When: caller가 entities prefix로 일반 검색 범위를 좁힌다.
+    result = _context_service(vault_root).context(
+        ContextCommand(query="fanplus", mode="prompt", limit=8, path_prefix="entities")
+    )
+
+    # Then: orientation은 고정 파일을 유지하고 entity 후보는 잘못 dedupe되지 않는다.
+    section_by_name = {section.name: section for section in result.sections}
+    assert [note.path for note in section_by_name["orientation"].notes] == [
+        "SCHEMA.md",
+        "index.md",
+        "log.md",
+    ]
+    assert [note.path for note in section_by_name["entity_candidates"].notes] == [
+        "entities/fanplus-api.md"
+    ]

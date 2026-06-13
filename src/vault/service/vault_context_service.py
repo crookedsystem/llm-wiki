@@ -28,7 +28,7 @@ _SECTION_SPECS_BY_MODE: dict[ContextMode, tuple[_SectionSpec, ...]] = {
             name="orientation",
             purpose="Vault schema, index, and recent log orientation before answering or coding.",
             query_terms=("SCHEMA", "index", "log"),
-            quota=2,
+            quota=3,
             explicit_paths=("SCHEMA.md", "index.md", "log.md"),
         ),
         _SectionSpec(
@@ -68,7 +68,7 @@ _SECTION_SPECS_BY_MODE: dict[ContextMode, tuple[_SectionSpec, ...]] = {
             name="orientation",
             purpose="Schema/index/log pages needed before writing durable wiki knowledge.",
             query_terms=("SCHEMA", "index", "log"),
-            quota=2,
+            quota=3,
             explicit_paths=("SCHEMA.md", "index.md", "log.md"),
         ),
         _SectionSpec(
@@ -102,7 +102,7 @@ _SECTION_SPECS_BY_MODE: dict[ContextMode, tuple[_SectionSpec, ...]] = {
             name="orientation",
             purpose="Schema/index/log pages needed for a safe end-of-turn wiki update.",
             query_terms=("SCHEMA", "index", "log"),
-            quota=2,
+            quota=3,
             explicit_paths=("SCHEMA.md", "index.md", "log.md"),
         ),
         _SectionSpec(
@@ -245,9 +245,8 @@ class VaultContextService(FrozenModel):
         for path in spec.explicit_paths:
             if len(notes) >= limit:
                 break
-            path_prefix = command.path_prefix if command.path_prefix is not None else path
             result = self.search_service.search_notes(
-                SearchNotesCommand(query=query, limit=1, path_prefix=path_prefix)
+                SearchNotesCommand(query=query, limit=1, path_prefix=path)
             )
             for search_note in result.results:
                 if search_note.path in seen_paths:
