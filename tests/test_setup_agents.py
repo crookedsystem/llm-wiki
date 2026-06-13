@@ -17,6 +17,7 @@ from setup_support.hooks import (
     merge_claude_hook_settings,
     merge_codex_hook_settings,
 )
+from setup_support.installers import install_codex
 
 
 class _TtyInput(io.StringIO):
@@ -195,6 +196,35 @@ def test_setup_cli는_agent_옵션으로_일부_agent만_설치한다(
 
     assert result == 0
     assert installed_agents == ["codex", "claude"]
+
+
+def test_install_codex는_llm_wiki와_push_skill을_함께_설치한다(tmp_path: Path) -> None:
+    repo_root = tmp_path / "repo"
+    (repo_root / "skills" / "llm-wiki").mkdir(parents=True)
+    (repo_root / "skills" / "llm-wiki" / "SKILL.md").write_text(
+        "---\nname: llm-wiki\ndescription: test\n---\n",
+        encoding="utf-8",
+    )
+    (repo_root / "skills" / "llm-wiki-push").mkdir(parents=True)
+    (repo_root / "skills" / "llm-wiki-push" / "SKILL.md").write_text(
+        "---\nname: llm-wiki-push\ndescription: test\n---\n",
+        encoding="utf-8",
+    )
+    env_file = tmp_path / ".env"
+    env_file.write_text(f"CODEX_HOME={tmp_path / 'codex'}\n", encoding="utf-8")
+    config = resolve_config(
+        agent="codex",
+        repo_root=repo_root,
+        env_file=env_file,
+        process_env={},
+        install_hooks=False,
+    )
+
+    result = install_codex(config)
+
+    assert result == 0
+    assert (tmp_path / "codex" / "skills" / "llm-wiki" / "SKILL.md").exists()
+    assert (tmp_path / "codex" / "skills" / "llm-wiki-push" / "SKILL.md").exists()
 
 
 def test_setup_cli는_no_hooks와_claude_settings_option을_전달한다(

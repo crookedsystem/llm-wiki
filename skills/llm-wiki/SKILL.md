@@ -15,14 +15,15 @@ Use it when the user asks to use an Obsidian vault, Markdown KB, personal wiki, 
 
 Do not use it for one-off answers that should not be saved, or when the MCP server is unavailable and the user only wants a normal chat answer.
 
-## MCP tools exposed by this server
+## MCP tools used by this skill
 
-The underlying server exposes these tool names:
+The main wiki workflow uses these tool names:
 
 - `kb_write_note(note_path, title, type, tags, sources, body, created, updated, confidence?, contested?, if_hash?)` — write a note inside the configured vault from structured fields. The server renders YAML frontmatter, the top-level title heading, the body, and provenance. Existing notes require optimistic concurrency.
 - `kb_search_notes(query, limit?, path_prefix?)` — search the Markdown LLM Wiki vault and return ranked paths, titles, page types, tags, content hashes, and line snippets.
 
 Vault and graph counters are exposed as a REST API endpoint at `GET /metrics`, not as MCP tools.
+Vault GitHub push is handled by the separate `$llm-wiki-push` skill and must not be called from this skill.
 Agent UIs may prefix MCP tool names. If you see prefixed names, map them back to the raw tool names above.
 
 ## Vault operating model
@@ -425,6 +426,7 @@ When you must guarantee the update runs unattended, a stop/finalize hook can spa
 - Do not invent existing vault contents. If you cannot read a page, say so and ask for it or create a clearly named draft note instead of overwriting.
 - Do not hard-delete notes through this workflow.
 - Do not overwrite existing notes in MCP-only mode from snippets alone.
+- Do not call `kb_push_vault` from this skill. Use `$llm-wiki-push` for explicit vault GitHub push requests.
 - Treat the MCP endpoint as local by default: `http://127.0.0.1:9999/mcp`.
 - If the server later enables bearer auth, add the authorization header in the agent MCP config before using write tools.
 - Do not write raw, private transcripts wholesale into the wiki. Summarize durable decisions, facts, and relationships.

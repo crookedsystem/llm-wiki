@@ -1,0 +1,13 @@
+interface:
+  display_name: "LLM Wiki Push"
+  short_description: "Push LLM Wiki vault changes to GitHub."
+  default_prompt: "Use $llm-wiki-push to push pending LLM Wiki vault changes to GitHub."
+policy:
+  allow_implicit_invocation: false
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "llm_wiki"
+      description: "LLM Wiki MCP Streamable HTTP server"
+      transport: "streamable_http"
+      url: "http://127.0.0.1:9999/mcp"

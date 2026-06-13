@@ -10,6 +10,7 @@ def _project_root() -> Path:
 
 PROJECT_ROOT = _project_root()
 SKILL = PROJECT_ROOT / "skills" / "llm-wiki" / "SKILL.md"
+PUSH_SKILL = PROJECT_ROOT / "skills" / "llm-wiki-push" / "SKILL.md"
 
 
 def test_llm_wiki_skill_embeds_content_modeling_guidance() -> None:
@@ -43,6 +44,21 @@ def test_llm_wiki_skill_explains_hash_and_hook_rules() -> None:
         "UserPromptSubmit",
         "Stop",
         "Hook-driven always-on usage",
+    ]
+
+    for fragment in required_fragments:
+        assert fragment in content
+
+
+def test_llm_wiki_push_skill_requires_explicit_push_request() -> None:
+    content = PUSH_SKILL.read_text(encoding="utf-8")
+
+    required_fragments = [
+        "name: llm-wiki-push",
+        "Do not call `kb_push_vault()` unless the user explicitly asks",
+        "normal wiki writes never push without a direct user request",
+        "YYYY-MM-DD HH:MM - vault sync",
+        "Do not pass remote, branch, commit message, or interval options.",
     ]
 
     for fragment in required_fragments:

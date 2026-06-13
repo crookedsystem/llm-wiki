@@ -7,6 +7,7 @@ from mcp.server.fastmcp import FastMCP
 
 from common.config import Settings
 from common.runtime_registry import Runtime, get_runtime
+from vault.component.github_push_scheduler import GithubPushScheduler
 from vault.dto.response.health_response import HealthResponse
 from vault.dto.response.metrics_response import (
     MetricsResponse,
@@ -44,14 +45,21 @@ def create_fastapi_app(settings: Settings) -> FastAPI:
         settings,
         write_service=runtime.write_service,
         search_service=runtime.search_service,
+        git_push_service=runtime.git_push_service,
     )
     mcp_app = mcp_server.streamable_http_app()
+    github_push_scheduler = GithubPushScheduler(push_service=runtime.git_push_service)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         _ = app
         async with mcp_server.session_manager.run():
-            yield
+            if settings.github_push_enabled:
+                github_push_scheduler.start()
+            try:
+                yield
+            finally:
+                await github_push_scheduler.stop()
 
     app = FastAPI(
         title="llm-wiki",
@@ -62,6 +70,7 @@ def create_fastapi_app(settings: Settings) -> FastAPI:
     app.state.settings = settings
     app.state.runtime = runtime
     app.state.mcp_server = mcp_server
+    app.state.github_push_scheduler = github_push_scheduler
 
     @app.get(
         "/health",

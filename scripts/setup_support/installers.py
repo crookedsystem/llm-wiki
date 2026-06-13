@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from pathlib import Path
 
 from setup_support.codex_config import add_codex_mcp_server
 from setup_support.config import ResolvedConfig
 from setup_support.hooks import install_agent_hooks
 from setup_support.runner import CommandRunner, copy_directory
+
+SKILL_NAMES = ("llm-wiki", "llm-wiki-push")
 
 
 def install_agent(config: ResolvedConfig) -> int:
@@ -20,8 +23,7 @@ def install_agent(config: ResolvedConfig) -> int:
 
 def install_hermes(config: ResolvedConfig) -> int:
     runner = CommandRunner(dry_run=config.dry_run)
-    copy_directory(config.skill_source, config.hermes_skill_dest, dry_run=config.dry_run)
-    print(f"Installed Hermes/Hermess skill: {config.hermes_skill_dest}")
+    _install_skills(config, config.hermes_home / "skills", "Hermes/Hermess")
     install_agent_hooks(config)
 
     if not runner.command_exists("hermes"):
@@ -44,8 +46,7 @@ def install_hermes(config: ResolvedConfig) -> int:
 
 def install_claude(config: ResolvedConfig) -> int:
     runner = CommandRunner(dry_run=config.dry_run)
-    copy_directory(config.skill_source, config.claude_skill_dest, dry_run=config.dry_run)
-    print(f"Installed Claude skill: {config.claude_skill_dest}")
+    _install_skills(config, config.claude_skills_dir, "Claude")
     install_agent_hooks(config)
 
     if not runner.command_exists("claude"):
@@ -86,8 +87,7 @@ def install_claude(config: ResolvedConfig) -> int:
 
 
 def install_codex(config: ResolvedConfig) -> int:
-    copy_directory(config.skill_source, config.codex_skill_dest, dry_run=config.dry_run)
-    print(f"Installed Codex skill: {config.codex_skill_dest}")
+    _install_skills(config, config.codex_skills_dir, "Codex")
     install_agent_hooks(config)
     result = add_codex_mcp_server(
         config.codex_config_path,
@@ -99,6 +99,14 @@ def install_codex(config: ResolvedConfig) -> int:
     if result.changed and not config.dry_run:
         print("Restart Codex so it reloads config and skills.")
     return 0
+
+
+def _install_skills(config: ResolvedConfig, destination_root: Path, agent_label: str) -> None:
+    for skill_name in SKILL_NAMES:
+        source = config.repo_root / "skills" / skill_name
+        destination = destination_root / skill_name
+        copy_directory(source, destination, dry_run=config.dry_run)
+        print(f"Installed {agent_label} skill: {destination}")
 
 
 def _has_duplicate(output: str, server_name: str, server_url: str) -> bool:

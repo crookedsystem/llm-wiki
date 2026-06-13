@@ -17,4 +17,6 @@ def test_runtime은_같은_vault에_대해_하나의_write_queue를_재사용한
     assert first.note_repository is second.note_repository
     assert first.write_queue is second.write_queue
     assert first.write_service.queue is first.write_queue
+    assert first.git_push_service.queue is first.write_queue
     assert second.write_service.queue is first.write_queue
+    assert second.git_push_service.queue is first.write_queue

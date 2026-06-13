@@ -76,8 +76,10 @@ def test_fastapi_app은_tools_endpoint에서_mcp_tool_schema를_문서화한다(
     tools = response.json()
     write_note = next(tool for tool in tools if tool["name"] == "kb_write_note")
     search_notes = next(tool for tool in tools if tool["name"] == "kb_search_notes")
+    push_vault = next(tool for tool in tools if tool["name"] == "kb_push_vault")
     assert "structured fields" in write_note["description"]
     assert "Search Markdown notes" in search_notes["description"]
+    assert "push origin to the current branch" in push_vault["description"]
     assert write_note["inputSchema"]["type"] == "object"
     assert set(write_note["inputSchema"]["required"]) == {
         "note_path",
@@ -110,10 +112,27 @@ def test_fastapi_app은_tools_endpoint에서_mcp_tool_schema를_문서화한다(
     assert write_note["outputSchema"]["type"] == "object"
     assert search_notes["inputSchema"]["required"] == ["query"]
     assert search_notes["inputSchema"]["properties"]["query"]["type"] == "string"
+    assert push_vault["inputSchema"]["properties"] == {}
+    assert push_vault["outputSchema"]["type"] == "object"
     assert {tool["name"] for tool in tools} == {
         "kb_write_note",
         "kb_search_notes",
+        "kb_push_vault",
     }
+
+
+def test_fastapi_app은_github_push_enabled일_때_scheduler를_lifespan에서_관리한다(
+    tmp_path: Path,
+) -> None:
+    # Given: GitHub push scheduler가 활성화된 app이 있다.
+    app = create_fastapi_app(Settings(vault_path=tmp_path / "vault", github_push_enabled=True))
+
+    # When: FastAPI lifespan이 시작되고 종료된다.
+    with TestClient(app, base_url="http://127.0.0.1:9999"):
+        assert app.state.github_push_scheduler.is_running is True
+
+    # Then: lifespan 종료 시 background task도 정리된다.
+    assert app.state.github_push_scheduler.is_running is False
 
 
 def test_fastapi_app은_없는_route를_공통_error_envelope로_응답한다(tmp_path: Path) -> None:
