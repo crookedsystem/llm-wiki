@@ -11,6 +11,7 @@ from vault.infrastructure.repository.git_repository import GitRepository
 from vault.infrastructure.repository.vault_note_repository import (
     VaultNoteRepository,
 )
+from vault.service.vault_context_service import VaultContextService
 from vault.service.vault_git_push_service import VaultGitPushService
 from vault.service.vault_inspection_service import VaultInspectionService
 from vault.service.vault_search_service import VaultSearchService
@@ -23,6 +24,7 @@ class Runtime(FrozenModel):
     write_service: VaultWriteService
     git_push_service: VaultGitPushService
     search_service: VaultSearchService
+    context_service: VaultContextService
     inspection_service: VaultInspectionService
 
 
@@ -51,6 +53,7 @@ class RuntimeRegistry:
         )
         git_push_service = VaultGitPushService(repository=git_repository, queue=write_queue)
         search_service = VaultSearchService(note_repository=note_repository)
+        context_service = VaultContextService(note_repository=note_repository)
         inspection_service = VaultInspectionService(note_repository=note_repository)
         return Runtime(
             note_repository=note_repository,
@@ -58,6 +61,7 @@ class RuntimeRegistry:
             write_service=write_service,
             git_push_service=git_push_service,
             search_service=search_service,
+            context_service=context_service,
             inspection_service=inspection_service,
         )
 

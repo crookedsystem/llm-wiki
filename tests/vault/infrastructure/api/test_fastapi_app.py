@@ -76,9 +76,11 @@ def test_fastapi_app은_tools_endpoint에서_mcp_tool_schema를_문서화한다(
     tools = response.json()
     write_note = next(tool for tool in tools if tool["name"] == "kb_write_note")
     search_notes = next(tool for tool in tools if tool["name"] == "kb_search_notes")
+    context = next(tool for tool in tools if tool["name"] == "kb_context")
     push_vault = next(tool for tool in tools if tool["name"] == "kb_push_vault")
     assert "structured fields" in write_note["description"]
     assert "Search Markdown notes" in search_notes["description"]
+    assert "wiki link context map" in context["description"]
     assert "push origin to the current branch" in push_vault["description"]
     assert write_note["inputSchema"]["type"] == "object"
     assert set(write_note["inputSchema"]["required"]) == {
@@ -121,11 +123,16 @@ def test_fastapi_app은_tools_endpoint에서_mcp_tool_schema를_문서화한다(
     assert write_note["outputSchema"]["type"] == "object"
     assert search_notes["inputSchema"]["required"] == ["query"]
     assert search_notes["inputSchema"]["properties"]["query"]["type"] == "string"
+    assert context["inputSchema"]["required"] == ["query"]
+    assert context["inputSchema"]["properties"]["query"]["type"] == "string"
+    assert context["inputSchema"]["properties"]["mode"]["default"] == "prompt"
+    assert context["outputSchema"]["type"] == "object"
     assert push_vault["inputSchema"]["properties"] == {}
     assert push_vault["outputSchema"]["type"] == "object"
     assert {tool["name"] for tool in tools} == {
         "kb_write_note",
         "kb_search_notes",
+        "kb_context",
         "kb_push_vault",
     }
 

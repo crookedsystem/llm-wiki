@@ -1,8 +1,8 @@
 from pydantic import Field
 
+from common.helper.note_metadata_helper import extract_note_metadata
 from common.model import FrozenModel
 from vault.constant.search import (
-    FRONTMATTER_BOUNDARY,
     MAX_SEARCH_LIMIT,
     QUERY_TOKEN_PATTERN,
 )
@@ -12,9 +12,7 @@ from vault.infrastructure.repository.vault_note_repository import (
 )
 from vault.service.command.search_notes_command import SearchNotesCommand
 from vault.service.result.search_notes_result import (
-    FrontmatterMetadata,
     LineMatch,
-    NoteMetadata,
     NoteSearchResult,
     SearchNotesResult,
 )
@@ -37,7 +35,7 @@ class VaultSearchService(FrozenModel):
         for note_path in self.note_repository.markdown_notes(search_root):
             relative_path = self.note_repository.relative_path(note_path)
             content = self.note_repository.read_note(note_path)
-            metadata = _extract_metadata(content)
+            metadata = extract_note_metadata(content)
             score = self.score_service.score_note(
                 relative_path,
                 content,
@@ -82,86 +80,6 @@ def _validate_search_command(command: SearchNotesCommand) -> SearchNotesCommand:
 def _query_terms(query: str) -> list[str]:
     terms = [token.lower() for token in QUERY_TOKEN_PATTERN.findall(query) if len(token) > 1]
     return terms or [query.lower()]
-
-
-def _extract_metadata(content: str) -> NoteMetadata:
-    frontmatter = _frontmatter(content)
-    frontmatter_metadata = _frontmatter_metadata(frontmatter)
-    headings = _headings(content)
-    title = frontmatter_metadata.title or (headings[0] if headings else None)
-    return NoteMetadata(
-        title=title,
-        page_type=frontmatter_metadata.page_type,
-        tags=frontmatter_metadata.tags,
-        headings=headings,
-    )
-
-
-def _frontmatter(content: str) -> str:
-    lines = content.splitlines()
-    if not lines or lines[0].strip() != FRONTMATTER_BOUNDARY:
-        return ""
-    for index, line in enumerate(lines[1:], start=1):
-        if line.strip() == FRONTMATTER_BOUNDARY:
-            return "\n".join(lines[1:index])
-    return ""
-
-
-def _frontmatter_metadata(frontmatter: str) -> FrontmatterMetadata:
-    """지원하는 YAML front matter 필드만 DTO로 옮기고 나머지 raw 필드는 무시합니다."""
-    title: str | None = None
-    page_type: str | None = None
-    tags: list[str] = []
-    lines = frontmatter.splitlines()
-
-    for index, line in enumerate(lines):
-        key, separator, raw_value = line.partition(":")
-        if not separator:
-            continue
-        key_name = key.strip()
-        if key_name == "title" and raw_value.strip():
-            title = _normalize_frontmatter_scalar(raw_value)
-        elif key_name == "type" and raw_value.strip():
-            page_type = _normalize_frontmatter_scalar(raw_value)
-        elif key_name == "tags":
-            tags = _frontmatter_tags(lines, index, raw_value)
-
-    return FrontmatterMetadata(title=title, page_type=page_type, tags=tags)
-
-
-def _frontmatter_tags(lines: list[str], index: int, raw_value: str) -> list[str]:
-    stripped_value = raw_value.strip()
-    if stripped_value.startswith("[") and stripped_value.endswith("]"):
-        return [
-            _normalize_frontmatter_scalar(part)
-            for part in stripped_value[1:-1].split(",")
-            if part.strip()
-        ]
-
-    tags: list[str] = []
-    for following_line in lines[index + 1 :]:
-        stripped_line = following_line.strip()
-        if not stripped_line.startswith("-"):
-            break
-        tag = _normalize_frontmatter_scalar(stripped_line[1:])
-        if tag:
-            tags.append(tag)
-    return tags
-
-
-def _normalize_frontmatter_scalar(raw_value: str) -> str:
-    return raw_value.strip().strip("'\"")
-
-
-def _headings(content: str) -> list[str]:
-    headings: list[str] = []
-    for line in content.splitlines():
-        stripped_line = line.strip()
-        if stripped_line.startswith("#"):
-            heading = stripped_line.lstrip("#").strip()
-            if heading:
-                headings.append(heading)
-    return headings
 
 
 def _line_matches(content: str, query: str, terms: list[str]) -> list[LineMatch]:

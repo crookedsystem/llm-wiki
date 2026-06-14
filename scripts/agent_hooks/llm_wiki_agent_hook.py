@@ -5,10 +5,8 @@ import argparse
 import asyncio
 import json
 import os
-import re
 import sys
 from collections.abc import Mapping, Sequence
-from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -20,23 +18,24 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 from prompts.agent_hook import (  # noqa: E402 - import follows the sys.path bootstrap above
-    CONTEXT_BLOCK_CLOSE,
-    CONTEXT_BLOCK_OPEN,
-    CONTEXT_EMPTY_TEMPLATE,
-    CONTEXT_ERROR_TEMPLATE,
-    CONTEXT_FOOTER,
-    CONTEXT_HEADER_TEMPLATE,
-    CONTEXT_RESULTS_INTRO,
     STOP_UPDATE_REASON,
 )
 
-DEFAULT_LIMIT = 5
+from agent_hooks.llm_wiki_context_client import (  # noqa: E402 - import follows sys.path bootstrap
+    load_context,
+)
+from agent_hooks.llm_wiki_context_formatter import (  # noqa: E402 - import follows sys.path bootstrap
+    DEFAULT_LIMIT,
+    format_context_block,
+    format_context_error,
+)
 
 __all__ = [
     "STOP_UPDATE_REASON",
     "extract_prompt",
     "format_context_block",
     "format_context_error",
+    "load_context",
     "main",
 ]
 
@@ -70,6 +69,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Display name used in emitted context",
     )
     parser.add_argument("--query", help="Override user prompt/query text for context mode")
+    parser.add_argument(
+        "--context-mode",
+        choices=("prompt", "prewrite", "stop"),
+        default=os.environ.get("LLM_WIKI_HOOK_CONTEXT_MODE", "prompt"),
+        help="kb_context mode when the server supports link context",
+    )
     parser.add_argument(
         "--limit",
         type=int,
@@ -137,9 +142,10 @@ def extract_prompt(event: Mapping[str, Any]) -> str:
 def run_context_mode(args: argparse.Namespace, query: str) -> int:
     try:
         payload = asyncio.run(
-            search_notes(
+            load_context(
                 server_url=args.server_url,
                 query=query,
+                mode=args.context_mode,
                 limit=max(args.limit, 1),
                 path_prefix=args.path_prefix,
                 timeout_seconds=max(args.timeout, 0.5),
@@ -149,7 +155,14 @@ def run_context_mode(args: argparse.Namespace, query: str) -> int:
         print(format_context_error(args.server_name, args.server_url, exc))
         return 0
 
-    print(format_context_block(args.server_name, args.server_url, payload))
+    print(
+        format_context_block(
+            args.server_name,
+            args.server_url,
+            payload,
+            max_results=max(args.limit, 1),
+        )
+    )
     return 0
 
 
@@ -167,106 +180,6 @@ def run_stop_mode(args: argparse.Namespace, event: Mapping[str, Any]) -> int:
 def is_stop_hook_active(event: Mapping[str, Any]) -> bool:
     value = event.get("stop_hook_active") or event.get("stopHookActive")
     return bool(value)
-
-
-async def search_notes(
-    *,
-    server_url: str,
-    query: str,
-    limit: int,
-    path_prefix: str | None,
-    timeout_seconds: float,
-) -> dict[str, Any]:
-    from mcp.client.streamable_http import streamablehttp_client
-
-    from mcp import ClientSession
-
-    arguments: dict[str, Any] = {"query": normalize_query(query), "limit": limit}
-    if path_prefix:
-        arguments["path_prefix"] = path_prefix
-
-    timeout = timedelta(seconds=timeout_seconds)
-    async with (
-        streamablehttp_client(server_url, timeout=timeout, sse_read_timeout=timeout) as (
-            read_stream,
-            write_stream,
-            _get_session_id,
-        ),
-        ClientSession(read_stream, write_stream, read_timeout_seconds=timeout) as session,
-    ):
-        await session.initialize()
-        result = await session.call_tool("kb_search_notes", arguments, read_timeout_seconds=timeout)
-    return call_tool_result_to_dict(result)
-
-
-def normalize_query(query: str) -> str:
-    collapsed = re.sub(r"\s+", " ", query).strip()
-    return collapsed[:800]
-
-
-def call_tool_result_to_dict(result: Any) -> dict[str, Any]:
-    structured = getattr(result, "structuredContent", None)
-    if isinstance(structured, Mapping):
-        return dict(structured)
-
-    content_items = getattr(result, "content", None) or []
-    for item in content_items:
-        text = getattr(item, "text", None)
-        if not isinstance(text, str):
-            continue
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(parsed, Mapping):
-            return dict(parsed)
-    return {"query": "", "count": 0, "results": []}
-
-
-def format_context_error(server_name: str, server_url: str, exc: Exception) -> str:
-    return CONTEXT_ERROR_TEMPLATE.format(
-        server_name=server_name,
-        server_url=server_url,
-        error_type=type(exc).__name__,
-    )
-
-
-def format_context_block(server_name: str, server_url: str, payload: Mapping[str, Any]) -> str:
-    results = payload.get("results")
-    if not isinstance(results, list) or not results:
-        return CONTEXT_EMPTY_TEMPLATE.format(server_name=server_name, server_url=server_url)
-
-    lines = [
-        CONTEXT_BLOCK_OPEN,
-        CONTEXT_HEADER_TEMPLATE.format(server_name=server_name, server_url=server_url),
-        CONTEXT_RESULTS_INTRO,
-    ]
-    for result in results[:DEFAULT_LIMIT]:
-        if not isinstance(result, Mapping):
-            continue
-        path = str(result.get("path") or "(unknown)")
-        title = str(result.get("title") or path)
-        page_type = str(result.get("page_type") or "unknown")
-        content_hash = str(result.get("content_hash") or "")
-        raw_tags = result.get("tags")
-        tags = raw_tags if isinstance(raw_tags, list) else []
-        tag_suffix = f" tags={','.join(map(str, tags[:5]))}" if tags else ""
-        hash_suffix = f" hash={content_hash[:12]}" if content_hash else ""
-        lines.append(
-            f"- [[{path.removesuffix('.md')}]] — {title} ({page_type}{tag_suffix}{hash_suffix})"
-        )
-        raw_matches = result.get("matches")
-        matches = raw_matches if isinstance(raw_matches, list) else []
-        for match in matches[:2]:
-            if not isinstance(match, Mapping):
-                continue
-            snippet = str(match.get("snippet") or "").strip()
-            line = match.get("line")
-            if snippet:
-                lines.append(f"  - L{line}: {snippet[:240]}")
-
-    lines.extend([CONTEXT_FOOTER, CONTEXT_BLOCK_CLOSE])
-    return "\n".join(lines)
 
 
 if __name__ == "__main__":

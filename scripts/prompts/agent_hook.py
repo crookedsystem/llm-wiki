@@ -25,11 +25,14 @@ Step 2 — If nothing qualifies: stop normally without writing, and say in one l
 judged this turn as not wiki-worthy.
 
 Step 3 — If something qualifies, use the configured llm-wiki MCP server to:
-1. search `SCHEMA.md`, `index.md`, recent `log.md`, and any affected entity/concept pages first;
-2. write only the durable knowledge identified in Step 1 (summarize — never copy private
+1. call `kb_context` with `mode="stop"` or `mode="prewrite"` first when available; otherwise
+   search `SCHEMA.md`, `index.md`, recent `log.md`, and any affected entity/concept pages;
+2. inspect returned broken_links, link_targets, and suggested_links; if a link needs textual
+   evidence, run `kb_search_notes` with the returned followup_search before writing;
+3. write only the durable knowledge identified in Step 1 (summarize — never copy private
    transcripts wholesale);
-3. update `index.md` and append a compact `log.md` entry for any durable wiki change;
-4. use returned `content_hash` values as `if_hash` when updating existing notes.
+4. update `index.md` and append a compact `log.md` entry for any durable wiki change;
+5. use returned `content_hash` values as `if_hash` when updating existing notes.
 Then stop normally.
 """
 
@@ -47,7 +50,7 @@ CONTEXT_ERROR_TEMPLATE: Final = (
 CONTEXT_EMPTY_TEMPLATE: Final = (
     "<llm-wiki-context>\n"
     "MCP server: `{server_name}` ({server_url})\n"
-    "No matching LLM Wiki notes were found for this prompt. "
+    "No matching LLM Wiki link context was found for this prompt. "
     "Before creating pages, search again for specific entities/concepts "
     "and follow the `llm-wiki` skill's schema/index/log rules.\n"
     "</llm-wiki-context>"

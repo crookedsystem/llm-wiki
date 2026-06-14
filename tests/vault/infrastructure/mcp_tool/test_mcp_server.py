@@ -27,6 +27,15 @@ class SearchToolResult(TypedDict):
     results: list[SearchNoteToolResult]
 
 
+class ContextToolResult(TypedDict):
+    count: int
+    broken_links: list[dict[str, object]]
+    link_targets: list[dict[str, object]]
+    suggested_links: list[dict[str, object]]
+    entity_guidance: dict[str, object]
+    usage: list[str]
+
+
 class PushToolResult(TypedDict):
     committed: bool
     commit_hash: str
@@ -43,6 +52,7 @@ def test_mcp_server는_기본_http_설정을_사용한다(tmp_path: Path) -> Non
         app_settings,
         runtime.write_service,
         runtime.search_service,
+        runtime.context_service,
         runtime.git_push_service,
     )
 
@@ -67,6 +77,7 @@ def test_mcp_server는_write_search_push_tool을_노출하고_description을_제
             settings,
             runtime.write_service,
             runtime.search_service,
+            runtime.context_service,
             runtime.git_push_service,
         )
 
@@ -90,12 +101,20 @@ def test_mcp_server는_write_search_push_tool을_노출하고_description을_제
         structured_write_result = cast(WriteNoteToolResult, write_result)
         _, search_result = await server.call_tool("kb_search_notes", {"query": "agent memory"})
         structured_search_result = cast(SearchToolResult, search_result)
+        _, context_result = await server.call_tool("kb_context", {"query": "agent memory"})
+        structured_context_result = cast(ContextToolResult, context_result)
 
         # Then: MCP는 쓰기/검색/push tool을 노출하고 각 tool description은 비어 있지 않다.
         tool_by_name = {tool.name: tool for tool in tools}
-        assert set(tool_by_name) == {"kb_write_note", "kb_search_notes", "kb_push_vault"}
+        assert set(tool_by_name) == {
+            "kb_write_note",
+            "kb_search_notes",
+            "kb_context",
+            "kb_push_vault",
+        }
         assert "structured fields" in (tool_by_name["kb_write_note"].description or "")
         assert "Search Markdown notes" in (tool_by_name["kb_search_notes"].description or "")
+        assert "wiki link context map" in (tool_by_name["kb_context"].description or "")
         assert "push origin to the current branch" in (
             tool_by_name["kb_push_vault"].description or ""
         )
@@ -104,6 +123,13 @@ def test_mcp_server는_write_search_push_tool을_노출하고_description을_제
         assert structured_search_result["count"] == 1
         assert results[0]["path"] == "concepts/agent-memory.md"
         assert results[0]["content_hash"] == structured_write_result["content_hash"]
+        assert structured_context_result["count"] >= 1
+        assert structured_context_result["link_targets"]
+        assert "sections" not in structured_context_result
+        assert structured_context_result["broken_links"] == []
+        assert structured_context_result["suggested_links"] == []
+        assert structured_context_result["entity_guidance"]["criteria"]
+        assert structured_context_result["usage"]
 
     asyncio.run(exercise_server())
 
@@ -120,6 +146,7 @@ def test_mcp_server는_write_timestamp의_초단위_UTC_Z_datetime을_검증한�
             settings,
             runtime.write_service,
             runtime.search_service,
+            runtime.context_service,
             runtime.git_push_service,
         )
 
@@ -180,6 +207,7 @@ def test_mcp_push_tool은_vault_변경사항을_commit하고_push한다(
             settings,
             runtime.write_service,
             runtime.search_service,
+            runtime.context_service,
             runtime.git_push_service,
         )
 

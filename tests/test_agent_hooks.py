@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 from agent_hooks.llm_wiki_agent_hook import (
     STOP_UPDATE_REASON,
     extract_prompt,
-    format_context_block,
-    format_context_error,
     main,
 )
+from agent_hooks.llm_wiki_context_client import load_context
+from agent_hooks.llm_wiki_context_formatter import format_context_block, format_context_error
 from pytest import CaptureFixture, MonkeyPatch
 
 
@@ -47,6 +48,90 @@ def test_format_context_block은_search_결과를_compact_context로_만든다()
     assert "structured fields" in block
     assert "do not pass complete Markdown" in block
     assert "write complete Markdown" not in block
+
+
+def test_format_context_block은_link_context를_연결후보별로_출력한다() -> None:
+    payload = {
+        "query": "sample chat",
+        "mode": "prompt",
+        "count": 3,
+        "usage": ["Use kb_context as a link/navigation map, not as evidence text."],
+        "entity_guidance": {
+            "criteria": ["Create an entity for a named project or service."],
+            "preferred_paths": ["entities/{project}.md"],
+            "prewrite_checks": ["prewrite: run kb_search_notes with followup_search."],
+        },
+        "orientation": [],
+        "broken_links": [
+            {
+                "source_path": "queries/sample-chat.md",
+                "source_content_hash": "feedface123456",
+                "target": "missing-room-rule",
+                "normalized_target": "missing-room-rule",
+                "occurrences": 1,
+                "suggested_path": "concepts/missing-room-rule.md",
+                "followup_search": "missing-room-rule",
+            }
+        ],
+        "link_targets": [
+            {
+                "path": "entities/sample-api.md",
+                "title": "sample-api",
+                "page_type": "entity",
+                "tags": ["project-context"],
+                "content_hash": "123456abcdef",
+                "relation": "entity_anchor",
+                "followup_search": "sample chat sample-api",
+            }
+        ],
+        "suggested_links": [],
+    }
+
+    block = format_context_block("llm_wiki", "http://127.0.0.1:9999/mcp", payload)
+
+    assert "Wiki link context from `kb_context`" in block
+    assert "mode=prompt" in block
+    assert "broken_links" in block
+    assert "link_targets" in block
+    assert "[[entities/sample-api]]" in block
+    assert "[[queries/sample-chat]] -> [[missing-room-rule]]" in block
+    assert "kb_search_notes query=missing-room-rule" in block
+    assert "Create an entity for a named project or service" in block
+    assert "prewrite: run kb_search_notes with followup_search" in block
+    assert "sample chat service" not in block
+
+
+def test_load_context는_kb_context_실패나_legacy_schema면_search_notes로_fallback한다(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    async def fake_search_notes(**kwargs: object) -> dict[str, object]:
+        return {"query": "fallback", "count": 0, "results": []}
+
+    async def fake_context_error(**kwargs: object) -> dict[str, object]:
+        raise RuntimeError("unknown tool")
+
+    async def fake_context_legacy(**kwargs: object) -> dict[str, object]:
+        return {"query": "legacy", "sections": [{"name": "direct_matches", "notes": []}]}
+
+    monkeypatch.setattr("agent_hooks.llm_wiki_context_client.search_notes", fake_search_notes)
+
+    for fake_context_notes in (fake_context_error, fake_context_legacy):
+        monkeypatch.setattr(
+            "agent_hooks.llm_wiki_context_client.context_notes",
+            fake_context_notes,
+        )
+        payload = asyncio.run(
+            load_context(
+                server_url="http://127.0.0.1:9999/mcp",
+                query="sample chat",
+                mode="prompt",
+                limit=12,
+                path_prefix=None,
+                timeout_seconds=1.0,
+            )
+        )
+
+        assert payload == {"query": "fallback", "count": 0, "results": []}
 
 
 def test_format_context_error는_fail_open_안내를_출력한다() -> None:
