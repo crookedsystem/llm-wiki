@@ -52,7 +52,7 @@ def test_format_context_block은_search_결과를_compact_context로_만든다()
 
 def test_format_context_block은_link_context를_연결후보별로_출력한다() -> None:
     payload = {
-        "query": "fanplus chat",
+        "query": "sample chat",
         "mode": "prompt",
         "count": 3,
         "usage": ["Use kb_context as a link/navigation map, not as evidence text."],
@@ -64,7 +64,7 @@ def test_format_context_block은_link_context를_연결후보별로_출력한다
         "orientation": [],
         "broken_links": [
             {
-                "source_path": "queries/fanplus-chat.md",
+                "source_path": "queries/sample-chat.md",
                 "source_content_hash": "feedface123456",
                 "target": "missing-room-rule",
                 "normalized_target": "missing-room-rule",
@@ -75,13 +75,13 @@ def test_format_context_block은_link_context를_연결후보별로_출력한다
         ],
         "link_targets": [
             {
-                "path": "entities/fanplus-api.md",
-                "title": "fanplus-api",
+                "path": "entities/sample-api.md",
+                "title": "sample-api",
                 "page_type": "entity",
                 "tags": ["project-context"],
                 "content_hash": "123456abcdef",
                 "relation": "entity_anchor",
-                "followup_search": "fanplus chat fanplus-api",
+                "followup_search": "sample chat sample-api",
             }
         ],
         "suggested_links": [],
@@ -93,12 +93,12 @@ def test_format_context_block은_link_context를_연결후보별로_출력한다
     assert "mode=prompt" in block
     assert "broken_links" in block
     assert "link_targets" in block
-    assert "[[entities/fanplus-api]]" in block
-    assert "[[queries/fanplus-chat]] -> [[missing-room-rule]]" in block
+    assert "[[entities/sample-api]]" in block
+    assert "[[queries/sample-chat]] -> [[missing-room-rule]]" in block
     assert "kb_search_notes query=missing-room-rule" in block
     assert "Create an entity for a named project or service" in block
     assert "prewrite: run kb_search_notes with followup_search" in block
-    assert "fanplus chat service" not in block
+    assert "sample chat service" not in block
 
 
 def test_load_context는_kb_context_실패나_legacy_schema면_search_notes로_fallback한다(
@@ -123,7 +123,7 @@ def test_load_context는_kb_context_실패나_legacy_schema면_search_notes로_f
         payload = asyncio.run(
             load_context(
                 server_url="http://127.0.0.1:9999/mcp",
-                query="fanplus chat",
+                query="sample chat",
                 mode="prompt",
                 limit=12,
                 path_prefix=None,

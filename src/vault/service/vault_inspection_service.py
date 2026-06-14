@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from common.helper.wiki_link_helper import extract_wiki_links, normalize_wiki_target
 from common.model import FrozenModel
 from vault.infrastructure.repository.vault_note_repository import (
     VaultNoteRepository,
@@ -10,7 +11,6 @@ from vault.service.result.vault_inspection_result import (
     VaultInspectionResult,
     VaultStatus,
 )
-from vault.service.vault_wiki_link import extract_wiki_links, normalize_wiki_target
 
 
 class VaultInspectionService(FrozenModel):

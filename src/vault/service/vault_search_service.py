@@ -1,5 +1,6 @@
 from pydantic import Field
 
+from common.helper.note_metadata_helper import extract_note_metadata
 from common.model import FrozenModel
 from vault.constant.search import (
     MAX_SEARCH_LIMIT,
@@ -15,7 +16,6 @@ from vault.service.result.search_notes_result import (
     NoteSearchResult,
     SearchNotesResult,
 )
-from vault.service.vault_note_metadata import extract_note_metadata
 from vault.service.vault_search_score_service import (
     VaultSearchScoreService,
 )

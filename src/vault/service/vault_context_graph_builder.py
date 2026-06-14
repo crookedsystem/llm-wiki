@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from common.helper.note_metadata_helper import extract_note_metadata
+from common.helper.wiki_link_helper import extract_wiki_links, normalize_wiki_target
 from common.model import FrozenModel
 from vault.constant.search import QUERY_TOKEN_PATTERN
 from vault.entity.vault_note import compute_sha256
@@ -11,8 +13,6 @@ from vault.service.result.context_result import (
     SuggestedLink,
 )
 from vault.service.vault_context_spec import ORIENTATION_PATHS
-from vault.service.vault_note_metadata import extract_note_metadata
-from vault.service.vault_wiki_link import extract_wiki_links, normalize_wiki_target
 
 
 class ContextGraph(FrozenModel):

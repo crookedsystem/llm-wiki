@@ -1,8 +1,8 @@
 from pathlib import Path
 
+from common.helper.note_metadata_helper import NoteMetadata
 from common.model import FrozenModel
 from vault.constant.search import SYNTHESIZED_PAGE_DIRS
-from vault.service.result.search_notes_result import NoteMetadata
 
 
 class VaultSearchScoreService(FrozenModel):

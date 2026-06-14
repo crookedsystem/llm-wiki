@@ -1,5 +1,21 @@
-from vault.constant.search import FRONTMATTER_BOUNDARY
-from vault.service.result.search_notes_result import FrontmatterMetadata, NoteMetadata
+from pydantic import Field
+
+from common.model import FrozenModel
+
+_FRONTMATTER_BOUNDARY = "---"
+
+
+class FrontmatterMetadata(FrozenModel):
+    title: str | None = None
+    page_type: str | None = None
+    tags: list[str] = Field(default_factory=list)
+
+
+class NoteMetadata(FrozenModel):
+    title: str | None
+    page_type: str | None
+    tags: list[str]
+    headings: list[str]
 
 
 def extract_note_metadata(content: str) -> NoteMetadata:
@@ -17,10 +33,10 @@ def extract_note_metadata(content: str) -> NoteMetadata:
 
 def _frontmatter(content: str) -> str:
     lines = content.splitlines()
-    if not lines or lines[0].strip() != FRONTMATTER_BOUNDARY:
+    if not lines or lines[0].strip() != _FRONTMATTER_BOUNDARY:
         return ""
     for index, line in enumerate(lines[1:], start=1):
-        if line.strip() == FRONTMATTER_BOUNDARY:
+        if line.strip() == _FRONTMATTER_BOUNDARY:
             return "\n".join(lines[1:index])
     return ""
 
